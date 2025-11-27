@@ -3,60 +3,56 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 
 #if defined(__cplusplus)
 #include "os/table_base.hpp"
 
-class PageTableEntry {
-public:
-	PageTableEntry() noexcept;
-	PageTableEntry(void *frame, int owner_id, int protection_flags, bool dirty = false) noexcept;
+struct PageRecord {
+    PageRecord() noexcept : owner_id(-1), valid(true) {}
+    explicit PageRecord(int owner) noexcept : owner_id(owner), valid(true) {}
 
-	void *Frame() const noexcept;
-	void SetFrame(void *frame) noexcept;
-
-	int OwnerId() const noexcept;
-	void SetOwnerId(int owner_id) noexcept;
-
-	int Protection() const noexcept;
-	void SetProtection(int protection_flags) noexcept;
-
-	bool Dirty() const noexcept;
-	void MarkDirty(bool dirty) noexcept;
-
-private:
-	void *frame_;
-	int owner_id_;
-	int protection_flags_;
-	bool dirty_;
+    int owner_id;
+    bool valid;
 };
 
-class PageTable final : public TableBase<std::uintptr_t, PageTableEntry> {
+class PageTable final : public TableBase<std::uintptr_t, PageRecord> {
 public:
-	explicit PageTable(std::size_t capacity);
-	~PageTable();
+    explicit PageTable(std::size_t capacity = 0)
+        : TableBase<std::uintptr_t, PageRecord>(capacity == 0 ? std::numeric_limits<std::size_t>::max() : capacity) {}
 
-	PageTable(const PageTable &) = delete;
-	PageTable &operator=(const PageTable &) = delete;
-	PageTable(PageTable &&) noexcept;
-	PageTable &operator=(PageTable &&) noexcept;
+    using TableBase::Clear;
+    using TableBase::Find;
+    using TableBase::Insert;
+    using TableBase::Remove;
+    using TableBase::Size;
+    using TableBase::Update;
 
-	using TableBase::Capacity;
-	using TableBase::Clear;
-	using TableBase::Find;
-	using TableBase::Insert;
-	using TableBase::Remove;
-	using TableBase::Size;
-	using TableBase::Update;
+    bool PromoteOwner(std::uintptr_t page_no, int new_owner)
+    {
+        if (auto *record = Find(page_no)) {
+            record->owner_id = new_owner;
+            record->valid = true;
+            return true;
+        }
+        return false;
+    }
 
-	bool PromoteOwner(std::uintptr_t page_no, int new_owner_id);
-	bool SetProtection(std::uintptr_t page_no, int protection_flags);
+    bool Invalidate(std::uintptr_t page_no)
+    {
+        if (auto *record = Find(page_no)) {
+            record->valid = false;
+            return true;
+        }
+        return false;
+    }
 };
 
 #else
 
-typedef struct PageTableEntry PageTableEntry;
 typedef struct PageTable PageTable;
+
+typedef struct PageRecord PageRecord;
 
 #endif /* defined(__cplusplus) */
 
