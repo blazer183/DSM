@@ -26,6 +26,7 @@ public:
     using TableBase::Size;
     using TableBase::Update;
 
+    /* Acquire lock_id on behalf of requester (re-entrant). */
     bool TryAcquire(int lock_id, int requester)
     {
         auto *record = Find(lock_id);
@@ -40,6 +41,7 @@ public:
         return false;
     }
 
+    /* Release lock_id if requester currently owns it. */
     bool Release(int lock_id, int requester)
     {
         auto *record = Find(lock_id);

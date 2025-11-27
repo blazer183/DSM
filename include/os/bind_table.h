@@ -30,6 +30,7 @@ public:
     using TableBase::Size;
     using TableBase::Update;
 
+    /* Linear search across bindings to find match by file path. */
     const BindRecord *FindByFile(const std::string &file_path) const
     {
         for (const auto &kv : this->entries_) {

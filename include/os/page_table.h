@@ -6,46 +6,32 @@
 #include <limits>
 
 #if defined(__cplusplus)
+
+
 #include "os/table_base.hpp"
 
 struct PageRecord {
-    PageRecord() noexcept : owner_id(-1), valid(true) {}
-    explicit PageRecord(int owner) noexcept : owner_id(owner), valid(true) {}
-
-    int owner_id;
-    bool valid;
+	int owner_id { -1 };
 };
 
 class PageTable final : public TableBase<std::uintptr_t, PageRecord> {
 public:
+    using Base = TableBase<std::uintptr_t, PageRecord>;
+
     explicit PageTable(std::size_t capacity = 0)
-        : TableBase<std::uintptr_t, PageRecord>(capacity == 0 ? std::numeric_limits<std::size_t>::max() : capacity) {}
-
-    using TableBase::Clear;
-    using TableBase::Find;
-    using TableBase::Insert;
-    using TableBase::Remove;
-    using TableBase::Size;
-    using TableBase::Update;
-
-    bool PromoteOwner(std::uintptr_t page_no, int new_owner)
+        : Base(capacity == 0 ? std::numeric_limits<std::size_t>::max() : capacity)
     {
-        if (auto *record = Find(page_no)) {
-            record->owner_id = new_owner;
-            record->valid = true;
-            return true;
-        }
-        return false;
     }
 
-    bool Invalidate(std::uintptr_t page_no)
-    {
-        if (auto *record = Find(page_no)) {
-            record->valid = false;
-            return true;
-        }
-        return false;
-    }
+    using Base::Clear;
+    using Base::Find;
+    using Base::Insert;
+    using Base::Remove;
+    using Base::Size;
+    using Base::Update;
+
+    /* Placeholder for future platform-specific invalidation hooks. */
+    inline bool InvalidateRange(void *, std::size_t, int = 0) const noexcept { return false; }
 };
 
 #else
