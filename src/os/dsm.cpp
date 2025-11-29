@@ -3,5 +3,5 @@
 
 
 int dsm_init(int argc, char *argv[], int dsm_memsize){
-    
+    //第一部分，创建监听线程，监听线程实现代码与声明
 }

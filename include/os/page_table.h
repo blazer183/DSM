@@ -5,9 +5,6 @@
 #include <cstdint>
 #include <limits>
 
-#if defined(__cplusplus)
-
-
 #include "os/table_base.hpp"
 
 struct PageRecord {
@@ -34,12 +31,5 @@ public:
     inline bool InvalidateRange(void *, std::size_t, int = 0) const noexcept { return false; }
 };
 
-#else
-
-typedef struct PageTable PageTable;
-
-typedef struct PageRecord PageRecord;
-
-#endif /* defined(__cplusplus) */
 
 #endif /* OS_PAGE_TABLE_H */

@@ -4,7 +4,6 @@
 #include <cstddef>
 #include <cstdint>
 
-#if defined(__cplusplus)
 #include "os/table_base.hpp"
 
 struct LockRecord {
@@ -52,11 +51,5 @@ public:
     }
 };
 
-#else
-
-typedef struct LockTable LockTable;
-typedef struct LockRecord LockRecord;
-
-#endif /* defined(__cplusplus) */
 
 #endif /* OS_LOCK_TABLE_H */

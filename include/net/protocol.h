@@ -43,13 +43,13 @@ typedef enum {
     DSM_MSG_JOIN_ACK      = 0x02,  // Leader返回配置信息(ID, 基址)，也就是后续负载包括ID和基址，最好负载的前8字节是ID，后8字节是基址，默认返回0x4000000000
 
     // 2. 页面请求流程 (三跳协议)
-    DSM_MSG_PAGE_REQ      = 0x10,  // A 向 B发送页面请求
+    DSM_MSG_PAGE_REQ      = 0x10,  // A向B发送页面请求
     DSM_MSG_PAGE_REP      = 0x11,  // 注意：B不会判断自己是prob owner还是real owner,只是判断自己与pagetable里对应页的owner是否一致，
                                    // 一致就发送页面，否则返回页的owner的ID给A，如果页owner是-1，则向0号进程调数据
        
     // 3. 锁请求流程
     DSM_MSG_LOCK_ACQ      = 0x20,  // 同上
-    DSM_MSG_LOCK_REP      = 0x21,  // 同上 
+    DSM_MSG_LOCK_REP      = 0x21,  // 同上
     
     // 4. 维护与确认
     DSM_MSG_OWNER_UPDATE  = 0x30,  // 告知Manager所有权已变更，通过保留位区分页/锁
@@ -65,7 +65,6 @@ typedef struct {
     uint32_t payload_len;    // 后续负载长度 (不含包头)
 } __attribute__((packed)) dsm_header_t;
 
-#endif
 
 
 

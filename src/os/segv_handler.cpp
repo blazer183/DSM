@@ -1,4 +1,3 @@
-#define _GNU_SOURCE
 #include <csignal>
 #include <cstdlib>
 #include <cstring>
@@ -7,12 +6,20 @@
 #include <unistd.h>
 
 
-static size_t g_region_pages;   // 管理区域的页面数
-static size_t g_page_sz;        // 系统页面大小
-static void* g_region;          // 受管理的内存区域起始地址
-static struct sigaction g_prev_sa;  // 先前的 SIGSEGV 处理器
+#ifdef UNITEST
+#define STATIC 
+#else
+#define STATIC static
+#endif
 
-static void segv_handler(int signo, siginfo_t* info, void* uctx)
+
+
+STATIC size_t g_region_pages;   // 管理区域的页面数
+STATIC size_t g_page_sz;        // 系统页面大小
+STATIC void* g_region;          // 受管理的内存区域起始地址
+STATIC struct sigaction g_prev_sa;  // 先前的 SIGSEGV 处理器
+
+STATIC void segv_handler(int signo, siginfo_t* info, void* uctx)
 {
     (void)uctx;
     const uintptr_t fault = reinterpret_cast<uintptr_t>(info->si_addr);
@@ -31,7 +38,7 @@ static void segv_handler(int signo, siginfo_t* info, void* uctx)
               << reinterpret_cast<void*>(page_base) << '\n';
 
     // TODO: 拉取远端页、刷新版本号等
-    pull_remote_page(page_base);
+    //pull_remote_page(page_base);
 
     // 恢复页面权限为读写
     if (mprotect(reinterpret_cast<void*>(page_base), g_page_sz,
@@ -40,10 +47,10 @@ static void segv_handler(int signo, siginfo_t* info, void* uctx)
         _exit(1);
     }
 
-//    std::memset(reinterpret_cast<void*>(page_base), 0x42, g_page_sz);
+    std::memset(reinterpret_cast<void*>(page_base), 0x42, g_page_sz);
 }
 
-static void install_handler(void* base_addr, size_t num_pages)
+void install_handler(void* base_addr, size_t num_pages)
 {
     g_page_sz = static_cast<size_t>(sysconf(_SC_PAGESIZE)); // 获取系统页面大小
     g_region_pages = num_pages;
@@ -75,16 +82,3 @@ static void install_handler(void* base_addr, size_t num_pages)
     }
 }
 
-// int main()
-// {
-//     install_handler(nullptr, 4);
-//     std::cout << "managed region: " << g_region << " (" << g_region_pages
-//               << " pages, PROT_NONE)\n";
-
-//     volatile char* p = static_cast<char*>(g_region);
-//     char c = p[0] ;                  // 触发 SIGSEGV → handler 恢复权限并填充页面
-//     std::cout << "value=" << p[0] << '\n';
-
-//     munmap(g_region, g_region_pages * g_page_sz);
-//     return 0;
-// }

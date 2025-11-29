@@ -3,8 +3,6 @@
 
 #include <cstddef>
 #include <cstdint>
-
-#if defined(__cplusplus)
 #include <string>
 #include <utility>
 
@@ -41,11 +39,5 @@ public:
     }
 };
 
-#else
-
-typedef struct BindTable BindTable;
-typedef struct BindRecord BindRecord;
-
-#endif /* defined(__cplusplus) */
 
 #endif /* OS_BIND_TABLE_H */
