@@ -3,26 +3,26 @@
 #include <vector>
 #include "dsm_state.hpp"
 
-// å£°æ˜å¤–éƒ¨å‡½æ•°
+// ÉùÃ÷Íâ²¿º¯Êı
 void dsm_start_daemon(int port);
 
 int main() {
-    // 1. åˆå§‹åŒ–æ¨¡æ‹Ÿçš„å…±äº«å†…å­˜
+    // 1. ³õÊ¼»¯Ä£ÄâµÄ¹²ÏíÄÚ´æ
     auto& state = DSMState::GetInstance();
-    state.my_node_id = 1; // å‡è®¾æˆ‘æ˜¯ Node 1
+    state.my_node_id = 1; // ¼ÙÉèÎÒÊÇ Node 1
     
-    // åˆ†é… 1MB å†…å­˜æ¨¡æ‹Ÿ DSM å…±äº«åŒº
+    // ·ÖÅä 1MB ÄÚ´æÄ£Äâ DSM ¹²ÏíÇø
     state.shared_mem_base = malloc(1024 * 1024); 
     if (!state.shared_mem_base) {
         std::cerr << "Memory allocation failed" << std::endl;
         return -1;
     }
 
-    // 2. å¯åŠ¨æœåŠ¡ (ç›‘å¬ 8080)
+    // 2. Æô¶¯·şÎñ (¼àÌı 8080)
     std::cout << "Starting DSM Server Node 1..." << std::endl;
     dsm_start_daemon(8080);
 
-    // é‡Šæ”¾å†…å­˜(å®é™…æ°¸è¿œè·‘ä¸åˆ°è¿™)
+    // ÊÍ·ÅÄÚ´æ(Êµ¼ÊÓÀÔ¶ÅÜ²»µ½Õâ)
     free(state.shared_mem_base);
     return 0;
 }

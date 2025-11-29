@@ -43,7 +43,7 @@ void rio_readinit(rio_t *rp, int fd)
 ssize_t rio_readline(rio_t *rp, void *usrbuf, size_t maxlen)
 {
 	int n, rc;
-	char c, *bufp = usrbuf;
+	char c, *bufp = (char*) usrbuf;
 
 	for (n = 1; (size_t)n < maxlen; n++) {
 		if ((rc = (int)rio_read(rp, &c, 1)) == 1) {
@@ -70,7 +70,7 @@ ssize_t rio_readn(rio_t *rp, void *usrbuf, size_t n)
 {
 	size_t nleft = n;
 	ssize_t nread;
-	char *bufp = usrbuf;
+	char *bufp = (char*) usrbuf;
 
 	while (nleft > 0) {
 		if ((nread = rio_read(rp, bufp, nleft)) < 0)

@@ -9,18 +9,18 @@
 #include <netinet/in.h>
 #include <arpa/inet.h> 
 
-// å¼•å…¥ä½ çš„å¤´æ–‡ä»¶
+// ÒıÈëÄãµÄÍ·ÎÄ¼ş
 #include "net/protocol.h"
 #include "net/dsm_protocol.h"
 #include "dsm_state.hpp"
 
 // ============================================
-// ä¸šåŠ¡é€»è¾‘å¤„ç†å‡½æ•° (ç§æœ‰)
+// ÒµÎñÂß¼­´¦Àíº¯Êı (Ë½ÓĞ)
 // ============================================
 
-// å¤„ç†é¡µé¢è¯·æ±‚: Requestor -> Manager
+// ´¦ÀíÒ³ÃæÇëÇó: Requestor -> Manager
 // ---------------------------------------------------------
-// ä¿®æ­£åçš„ process_page_req (é€‚é…é˜Ÿå‹çš„æ–° struct PageRecord)
+// ĞŞÕıºóµÄ process_page_req (ÊÊÅä¶ÓÓÑµÄĞÂ struct PageRecord)
 // ---------------------------------------------------------
 void process_page_req(int sock, const dsm_header_t& head, const payload_page_req_t& body) {
     auto& state = DSMState::GetInstance();
@@ -28,34 +28,34 @@ void process_page_req(int sock, const dsm_header_t& head, const payload_page_req
 
     uintptr_t page_addr = (uintptr_t)state.shared_mem_base + (body.page_index * DSM_PAGE_SIZE);
     
-    // 1. æŸ¥è¡¨
+    // 1. ²é±í
     auto* record = state.page_table.Find(page_addr);
     
-    // 2. ç›´æ¥è®¿é—® owner_id (å› ä¸ºå®ƒæ˜¯ struct)
+    // 2. Ö±½Ó·ÃÎÊ owner_id (ÒòÎªËüÊÇ struct)
     int current_owner = record ? record->owner_id : -1; 
 
     if (current_owner == state.my_node_id || current_owner == -1) {
-        // Case A: æˆ‘æ˜¯ Owner
-        // TODO: å‘é€ DSM_MSG_PAGE_DATA (ç›®å‰å…ˆç•¥è¿‡æ•°æ®å‘é€)
+        // Case A: ÎÒÊÇ Owner
+        // TODO: ·¢ËÍ DSM_MSG_PAGE_DATA (Ä¿Ç°ÏÈÂÔ¹ıÊı¾İ·¢ËÍ)
         
-        // æ›´æ–°æ‰€æœ‰æƒ
+        // ¸üĞÂËùÓĞÈ¨
         if (record) {
             record->owner_id = head.src_node_id;
         } else {
-            // æ³¨æ„ï¼šPageRecord æ˜¯ structï¼Œç”¨å¤§æ‹¬å· {} åˆå§‹åŒ–
+            // ×¢Òâ£ºPageRecord ÊÇ struct£¬ÓÃ´óÀ¨ºÅ {} ³õÊ¼»¯
             PageRecord new_rec; 
             new_rec.owner_id = head.src_node_id;
             state.page_table.Insert(page_addr, new_rec);
         }
         std::cout << "[DSM] Page " << body.page_index << " transfer to Node " << head.src_node_id << std::endl;
     } else {
-        // Case B: è½¬å‘
+        // Case B: ×ª·¢
         std::cout << "[DSM] Forward Page Req to RealOwner: " << current_owner << std::endl;
     }
 }
 
 // ---------------------------------------------------------
-// ä¿®æ­£åçš„ process_lock_acq (é€‚é…é˜Ÿå‹çš„æ–° struct LockRecord)
+// ĞŞÕıºóµÄ process_lock_acq (ÊÊÅä¶ÓÓÑµÄĞÂ struct LockRecord)
 // ---------------------------------------------------------
 void process_lock_acq(int sock, const dsm_header_t& head, const payload_lock_req_t& body) {
     auto& state = DSMState::GetInstance();
@@ -64,10 +64,10 @@ void process_lock_acq(int sock, const dsm_header_t& head, const payload_lock_req
     int lock_id = body.lock_id;
     int requester = head.src_node_id;
 
-    // 1. å°è¯•è·å–é” (LockTable ç±»è‡ªå¸¦çš„æ–¹æ³•)
+    // 1. ³¢ÊÔ»ñÈ¡Ëø (LockTable Àà×Ô´øµÄ·½·¨)
     bool success = state.lock_table.TryAcquire(lock_id, requester);
 
-    // 2. å‡†å¤‡å›åŒ…
+    // 2. ×¼±¸»Ø°ü
     dsm_header_t reply_head;
     reply_head.type = DSM_MSG_LOCK_REP;
     reply_head.src_node_id = state.my_node_id;
@@ -80,19 +80,19 @@ void process_lock_acq(int sock, const dsm_header_t& head, const payload_lock_req
 
     if (success) {
         reply_head.payload_len = sizeof(reply_body);
-        reply_head.unused = 1; // æˆåŠŸ
+        reply_head.unused = 1; // ³É¹¦
         rio_writen(sock, &reply_head, sizeof(reply_head));
         rio_writen(sock, &reply_body, sizeof(reply_body));
         std::cout << "[DSM] Lock " << lock_id << " GRANTED to Node " << requester << std::endl;
     } else {
-        // å¤±è´¥
-        reply_head.payload_len = 0; // å¤±è´¥åŒ…ä¸å¸¦bodyï¼Œæˆ–è€…å¸¦ç©ºbody
-        reply_head.unused = 0;      // å¤±è´¥
+        // Ê§°Ü
+        reply_head.payload_len = 0; // Ê§°Ü°ü²»´øbody£¬»òÕß´ø¿Õbody
+        reply_head.unused = 0;      // Ê§°Ü
         rio_writen(sock, &reply_head, sizeof(reply_head));
         
-        // è·å–å½“å‰é”çš„æŒæœ‰è€…ï¼Œç”¨äºæ‰“å°æ—¥å¿—
+        // »ñÈ¡µ±Ç°ËøµÄ³ÖÓĞÕß£¬ÓÃÓÚ´òÓ¡ÈÕÖ¾
         auto* rec = state.lock_table.Find(lock_id);
-        // ç›´æ¥è®¿é—® owner_id
+        // Ö±½Ó·ÃÎÊ owner_id
         int holder = rec ? rec->owner_id : -1;
         
         std::cout << "[DSM] Lock " << lock_id << " BUSY (Held by " << holder << ")" << std::endl;
@@ -100,29 +100,29 @@ void process_lock_acq(int sock, const dsm_header_t& head, const payload_lock_req
 }
 
 // ============================================
-// ç½‘ç»œçº¿ç¨‹å¾ªç¯
+// ÍøÂçÏß³ÌÑ­»·
 // ============================================
 
-// å•ä¸ªå¯¹ç­‰èŠ‚ç‚¹(Peer)çš„å¤„ç†çº¿ç¨‹
+// µ¥¸ö¶ÔµÈ½Úµã(Peer)µÄ´¦ÀíÏß³Ì
 void peer_handler(int connfd) {
     rio_t rp;
     rio_readinit(&rp, connfd);
 
     dsm_header_t header;
-    std::vector<char> buffer; // åŠ¨æ€ç¼“å†²åŒº
+    std::vector<char> buffer; // ¶¯Ì¬»º³åÇø
 
     while (true) {
-        // 1. è¯»å–å¤´éƒ¨ (Blocking, robust)
+        // 1. ¶ÁÈ¡Í·²¿ (Blocking, robust)
         ssize_t n = rio_readn(&rp, &header, sizeof(dsm_header_t));
         if (n != sizeof(dsm_header_t)) {
-            // è¿æ¥æ–­å¼€æˆ–é”™è¯¯
+            // Á¬½Ó¶Ï¿ª»ò´íÎó
             close(connfd);
             return;
         }
 
-        // 2. å‡†å¤‡ç¼“å†²åŒºè¯»å– Payload
+        // 2. ×¼±¸»º³åÇø¶ÁÈ¡ Payload
         if (header.payload_len > 0) {
-            if (header.payload_len > 10 * 1024 * 1024) { // å®‰å…¨æ£€æŸ¥ï¼šé™åˆ¶æœ€å¤§10MB
+            if (header.payload_len > 10 * 1024 * 1024) { // °²È«¼ì²é£ºÏŞÖÆ×î´ó10MB
                 std::cerr << "[DSM] Payload too big!" << std::endl;
                 break;
             }
@@ -131,7 +131,7 @@ void peer_handler(int connfd) {
             if (n != header.payload_len) break;
         }
 
-        // 3. æ¶ˆæ¯åˆ†å‘ (Switch)
+        // 3. ÏûÏ¢·Ö·¢ (Switch)
         switch (header.type) {
             case DSM_MSG_PAGE_REQ:
                 process_page_req(connfd, header, *(payload_page_req_t*)buffer.data());
@@ -141,14 +141,14 @@ void peer_handler(int connfd) {
                 process_lock_acq(connfd, header, *(payload_lock_req_t*)buffer.data());
                 break;
             
-            // TODO: å¤„ç† JOIN, ACK, OWNER_UPDATE ç­‰
+            // TODO: ´¦Àí JOIN, ACK, OWNER_UPDATE µÈ
             default:
                 std::cout << "[DSM] Unknown Msg Type: " << (int)header.type << std::endl;
         }
     }
 }
 
-// ä¸»ç›‘å¬å‡½æ•° (éœ€è¦åœ¨ main æˆ–åˆå§‹åŒ–ä¸­å¯åŠ¨)
+// Ö÷¼àÌıº¯Êı (ĞèÒªÔÚ main »ò³õÊ¼»¯ÖĞÆô¶¯)
 void dsm_start_daemon(int port) {
     int listenfd, connfd;
     struct sockaddr_in clientaddr;
@@ -157,7 +157,7 @@ void dsm_start_daemon(int port) {
 
     listenfd = socket(AF_INET, SOCK_STREAM, 0);
     
-    // ã€æ–°å¢ã€‘å…è®¸ç«¯å£å¤ç”¨ï¼Œé˜²æ­¢é‡å¯Serveræ—¶æŠ¥ "Address already in use"
+    // ¡¾ĞÂÔö¡¿ÔÊĞí¶Ë¿Ú¸´ÓÃ£¬·ÀÖ¹ÖØÆôServerÊ±±¨ "Address already in use"
     int optval = 1;
     setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, (const void *)&optval , sizeof(int));
 
@@ -166,7 +166,7 @@ void dsm_start_daemon(int port) {
     serveraddr.sin_port = htons((unsigned short)port);
 
     if (bind(listenfd, (struct sockaddr *)&serveraddr, sizeof(serveraddr)) < 0) {
-        perror("bind failed"); // æ‰“å°é”™è¯¯ä¿¡æ¯
+        perror("bind failed"); // ´òÓ¡´íÎóĞÅÏ¢
         return;
     }
     
