@@ -5,31 +5,31 @@
 #include <mutex>
 #include <memory>
 #include "os/page_table.h"
-#include "os/locktable.h"  // æ³¨æ„æ–‡ä»¶åå¤§å°å†™è¦å’Œå®é™…æ–‡ä»¶ä¸€è‡´
+#include "os/locktable.h"  // ×¢ÒâÎÄ¼şÃû´óĞ¡Ğ´ÒªºÍÊµ¼ÊÎÄ¼şÒ»ÖÂ
 #include "os/bindtable.h"
 
-// å…¨å±€ DSM çŠ¶æ€ç®¡ç†ç±»
+// È«¾Ö DSM ×´Ì¬¹ÜÀíÀà
 struct DSMState {
-    // äº’æ–¥é”ï¼šä¿æŠ¤ä»¥ä¸‹æ‰€æœ‰è¡¨çš„æ“ä½œ
+    // »¥³âËø£º±£»¤ÒÔÏÂËùÓĞ±íµÄ²Ù×÷
     std::mutex state_mutex;
 
-    // ä¸‰å¤§æ ¸å¿ƒè¡¨
+    // Èı´óºËĞÄ±í
     PageTable page_table;
     LockTable lock_table;
     BindTable bind_table;
 
-    // è‡ªèº«èŠ‚ç‚¹ä¿¡æ¯
+    // ×ÔÉí½ÚµãĞÅÏ¢
     int my_node_id = -1;
     void* shared_mem_base = nullptr;
 
-    // å•ä¾‹æ¨¡å¼è·å–
+    // µ¥ÀıÄ£Ê½»ñÈ¡
     static DSMState& GetInstance() {
         static DSMState instance;
         return instance;
     }
 
 private:
-    DSMState() : page_table(1024) {} // é¢„åˆ†é…å®¹é‡
+    DSMState() : page_table(1024) {} // Ô¤·ÖÅäÈİÁ¿
 };
 
 #endif // DSM_STATE_HPP

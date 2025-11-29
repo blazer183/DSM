@@ -4,15 +4,15 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <cstring>
-#include "net/dsm_protocol.h" // å¼•ç”¨ä½ çš„åè®®å¤´æ–‡ä»¶
+#include "net/dsm_protocol.h" // ÒıÓÃÄãµÄĞ­ÒéÍ·ÎÄ¼ş
 
 int main() {
-    // 1. åˆ›å»º Socket
+    // 1. ´´½¨ Socket
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     struct sockaddr_in serv_addr;
     
     serv_addr.sin_family = AF_INET;
-    serv_addr.sin_port = htons(8080); // è¿æ¥ Server çš„ 8080 ç«¯å£
+    serv_addr.sin_port = htons(8080); // Á¬½Ó Server µÄ 8080 ¶Ë¿Ú
     inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr);
 
     if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
@@ -21,7 +21,7 @@ int main() {
     }
     std::cout << "[Client] Connected to DSM Server." << std::endl;
 
-    // 2. æ„é€ è¯·æ±‚ï¼šæˆ‘æ˜¯ Node 2ï¼Œæˆ‘æƒ³ç”³è¯· 99 å·é”
+    // 2. ¹¹ÔìÇëÇó£ºÎÒÊÇ Node 2£¬ÎÒÏëÉêÇë 99 ºÅËø
     payload_lock_req_t req;
     req.lock_id = 99;
 
@@ -32,12 +32,12 @@ int main() {
     head.payload_len = sizeof(req);
     head.unused = 0;
 
-    // 3. å‘é€è¯·æ±‚
-    write(sock, &head, sizeof(head)); // å‘åŒ…å¤´
-    write(sock, &req, sizeof(req));   // å‘åŒ…ä½“
+    // 3. ·¢ËÍÇëÇó
+    write(sock, &head, sizeof(head)); // ·¢°üÍ·
+    write(sock, &req, sizeof(req));   // ·¢°üÌå
     std::cout << "[Client] Sent Lock Request for LockID 99" << std::endl;
 
-    // 4. æ¥æ”¶å“åº”
+    // 4. ½ÓÊÕÏìÓ¦
     dsm_header_t rep_head;
     int n = read(sock, &rep_head, sizeof(rep_head));
     
