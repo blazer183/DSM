@@ -1,103 +1,104 @@
 #!/bin/bash
 
-# ================= 1. È«¾ÖÅäÖÃ (ÇëĞŞ¸ÄÕâÀï) =================
+# ================= 1. å…¨å±€é…ç½® (è¯·ä¿®æ”¹è¿™é‡Œ) =================
 
-# --- ÏîÄ¿Â·¾¶ ---
-SOURCE_DIR="/home/heqizheng/dsm"        # ÄãµÄÔ´Âë¸ùÄ¿Â¼
-BUILD_CMD="g++ src/os/dsm.cpp src/network/connection.cpp -Iinclude -o dsm_app -lpthread" # ÄãµÄ±àÒëÃüÁî
-EXE_NAME="dsm_app"                      # ±àÒëÉú³ÉµÄÎÄ¼şÃû
+# --- é¡¹ç›®è·¯å¾„ ---
+SOURCE_DIR="/home/heqizheng/dsm"        # ä½ çš„æºç æ ¹ç›®å½•
+#BUILD_CMD="make -j4" # è¿è¡Œmakefileç¼–è¯‘
+BUILD_CMD="g++ test.cpp -o dsm_app " 
+EXE_NAME="dsm_app"                      # ç¼–è¯‘ç”Ÿæˆçš„æ–‡ä»¶å
 
-# --- ²¿ÊğÄ¿±êÂ·¾¶ (ËùÓĞ»úÆ÷Í³Ò») ---
-# ³ÌĞò½«±»¸´ÖÆµ½Õâ¸öÎÄ¼ş¼ĞÔËĞĞ
-REMOTE_DIR="/home/heqizheng/dsm_bin"
+# --- éƒ¨ç½²ç›®æ ‡è·¯å¾„ (æ‰€æœ‰æœºå™¨ç»Ÿä¸€) ---
+# ç¨‹åºå°†è¢«å¤åˆ¶åˆ°è¿™ä¸ªæ–‡ä»¶å¤¹è¿è¡Œ
+REMOTE_DIR="/home/heqizheng/Desktop/dsm_bin"
 
-# --- DSM ÔËĞĞ²ÎÊı ---
-LEADER_IP="192.168.1.100"   # Master µÄÕæÊµÄÚÍø IP (eth1)
-LEADER_PORT="8080"          # DSM ¼àÌı¶Ë¿Ú
+# --- DSM è¿è¡Œå‚æ•° ---
+LEADER_IP="10.29.109.58"   # Master çš„çœŸå®å†…ç½‘ IP (eth1)
+LEADER_PORT="9999"          # DSM ç›‘å¬ç«¯å£
 
-# --- »úÆ÷ÁĞ±í (ÓÃ»§Ãû@IP) ---
-# Master: ÓÃÓÚ±¾µØ²¿ÊğºÍÆô¶¯
-MASTER_NODE="heqizheng@192.168.1.100"
+# --- æœºå™¨åˆ—è¡¨ (ç”¨æˆ·å@IP) ---
+# Master: ç”¨äºæœ¬åœ°éƒ¨ç½²å’Œå¯åŠ¨
+MASTER_NODE="heqizheng@10.29.109.58"
 
-# Workers: ÓÃÓÚÔ¶³Ì·Ö·¢ºÍÆô¶¯
+# Workers: ç”¨äºè¿œç¨‹åˆ†å‘å’Œå¯åŠ¨
 WORKER_NODES=(
     "heqizheng@10.112.100.112"
-    # "heqizheng@10.112.100.113"
+    #å¢åŠ å…¶ä»–èŠ‚ç‚¹åˆ—è¡¨
 )
 
-# ËùÓĞ½ÚµãºÏ¼¯ (ÓÃÓÚÍ£Ö¹ºÍÆô¶¯)
+# æ‰€æœ‰èŠ‚ç‚¹åˆé›† (ç”¨äºåœæ­¢å’Œå¯åŠ¨)
 ALL_NODES=("$MASTER_NODE" "${WORKER_NODES[@]}")
 
-# ================= 2. ±àÒë½×¶Î (Build) =================
-echo -e "\n? [1/4] ÕıÔÚ±àÒë..."
+# ================= 2. ç¼–è¯‘é˜¶æ®µ (Build) =================
+echo -e "\n? [1/4] æ­£åœ¨ç¼–è¯‘..."
 cd $SOURCE_DIR
 
-# Ö´ĞĞ±àÒë
+# æ‰§è¡Œç¼–è¯‘
 $BUILD_CMD
 
 if [ $? -ne 0 ]; then
-    echo "? ±àÒëÊ§°Ü£¡Çë¼ì²é´úÂë´íÎó¡£"
+    echo "? ç¼–è¯‘å¤±è´¥ï¼è¯·æ£€æŸ¥ä»£ç é”™è¯¯ã€‚"
     exit 1
 fi
-echo "? ±àÒë³É¹¦£¡"
+echo "? ç¼–è¯‘æˆåŠŸï¼"
 
-# ================= 3. ·Ö·¢½×¶Î (Deploy) =================
-echo -e "\n? [2/4] ÕıÔÚ·Ö·¢³ÌĞò..."
+# ================= 3. åˆ†å‘é˜¶æ®µ (Deploy) =================
+echo -e "\n? [2/4] æ­£åœ¨åˆ†å‘ç¨‹åº..."
 
-# 3.1 ²¿Êğµ½ Master ±¾»ú
-echo " -> ²¿Êğµ½±¾»ú (Master)..."
+# 3.1 éƒ¨ç½²åˆ° Master æœ¬æœº
+echo " -> éƒ¨ç½²åˆ°æœ¬æœº (Master)..."
 mkdir -p $REMOTE_DIR
 cp $SOURCE_DIR/$EXE_NAME $REMOTE_DIR/
 chmod +x $REMOTE_DIR/$EXE_NAME
 
-# 3.2 ²¿Êğµ½ Workers
+# 3.2 éƒ¨ç½²åˆ° Workers
 for WORKER in "${WORKER_NODES[@]}"; do
-    echo " -> ·¢ËÍµ½ Worker: $WORKER..."
+    echo " -> å‘é€åˆ° Worker: $WORKER..."
     
-    # Ô¶³Ì´´½¨Ä¿Â¼ + ¸´ÖÆÎÄ¼ş + ¸³ÓèÈ¨ÏŞ
+    # è¿œç¨‹åˆ›å»ºç›®å½• + å¤åˆ¶æ–‡ä»¶ + èµ‹äºˆæƒé™
     ssh $WORKER "mkdir -p $REMOTE_DIR"
     scp $SOURCE_DIR/$EXE_NAME $WORKER:$REMOTE_DIR/
     ssh $WORKER "chmod +x $REMOTE_DIR/$EXE_NAME"
     
     if [ $? -eq 0 ]; then
-        echo "    ? $WORKER ·Ö·¢³É¹¦"
+        echo "    ? $WORKER åˆ†å‘æˆåŠŸ"
     else
-        echo "    ? $WORKER ·Ö·¢Ê§°Ü (¼ì²é SSH Á¬½Ó)"
+        echo "    ? $WORKER åˆ†å‘å¤±è´¥ (æ£€æŸ¥ SSH è¿æ¥)"
         exit 1
     fi
 done
 
-# ================= 4. ÇåÀí¾É½ø³Ì (Kill) =================
-echo -e "\n? [3/4] ÇåÀí¾É½ø³Ì..."
+# ================= 4. æ¸…ç†æ—§è¿›ç¨‹ (Kill) =================
+echo -e "\n? [3/4] æ¸…ç†æ—§è¿›ç¨‹..."
 
 for NODE in "${ALL_NODES[@]}"; do
-    # Ê¹ÓÃ pkill É±µô½Ğ dsm_app µÄ½ø³Ì£¬ºöÂÔ±¨´í(Èç¹û±¾À´¾ÍÃ»ÔËĞĞ)
+    # ä½¿ç”¨ pkill æ€æ‰å« dsm_app çš„è¿›ç¨‹ï¼Œå¿½ç•¥æŠ¥é”™(å¦‚æœæœ¬æ¥å°±æ²¡è¿è¡Œ)
     ssh $NODE "pkill -9 -x $EXE_NAME" > /dev/null 2>&1
-    echo " -> ÒÑÇåÀí $NODE"
+    echo " -> å·²æ¸…ç† $NODE"
 done
 
-# ================= 5. Æô¶¯¼¯Èº (Run) =================
-echo -e "\n? [4/4] Æô¶¯¼¯Èº..."
+# ================= 5. å¯åŠ¨é›†ç¾¤ (Run) =================
+echo -e "\n? [4/4] å¯åŠ¨é›†ç¾¤..."
 
-# ÏÈÆô¶¯ Master (Leader)
-echo " -> Æô¶¯ Leader ($MASTER_NODE)..."
+# å…ˆå¯åŠ¨ Master (Leader)
+echo " -> å¯åŠ¨ Leader ($MASTER_NODE)..."
 ssh $MASTER_NODE "export DSM_LEADER_IP=$LEADER_IP; \
                   export DSM_LEADER_PORT=$LEADER_PORT; \
                   nohup $REMOTE_DIR/$EXE_NAME > /tmp/dsm_master.log 2>&1 &"
 
-# µÈ´ı 1 Ãë£¬È·±£ Leader ÏÈÅÜÆğÀ´¼àÌı¶Ë¿Ú
+# ç­‰å¾… 1 ç§’ï¼Œç¡®ä¿ Leader å…ˆè·‘èµ·æ¥ç›‘å¬ç«¯å£
 sleep 1
 
-# ÔÙÆô¶¯ËùÓĞ Workers
+# å†å¯åŠ¨æ‰€æœ‰ Workers
 for WORKER in "${WORKER_NODES[@]}"; do
-    echo " -> Æô¶¯ Worker ($WORKER)..."
+    echo " -> å¯åŠ¨ Worker ($WORKER)..."
     ssh $WORKER "export DSM_LEADER_IP=$LEADER_IP; \
                  export DSM_LEADER_PORT=$LEADER_PORT; \
                  nohup $REMOTE_DIR/$EXE_NAME > /tmp/dsm_worker.log 2>&1 &"
 done
 
 echo -e "\n? ========================================="
-echo "? ¼¯ÈºÒÑÈ«²¿Æô¶¯£¡"
-echo "? ²é¿´ Master ÈÕÖ¾: ssh $MASTER_NODE 'tail -f /tmp/dsm_master.log'"
-echo "? ²é¿´ Worker ÈÕÖ¾: ssh ${WORKER_NODES[0]} 'tail -f /tmp/dsm_worker.log'"
+echo "? é›†ç¾¤å·²å…¨éƒ¨å¯åŠ¨ï¼"
+echo "? æŸ¥çœ‹ Master æ—¥å¿—: ssh $MASTER_NODE 'tail -f /tmp/dsm_master.log'"
+echo "? æŸ¥çœ‹ Worker æ—¥å¿—: ssh ${WORKER_NODES[0]} 'tail -f /tmp/dsm_worker.log'"
 echo "? ========================================="
