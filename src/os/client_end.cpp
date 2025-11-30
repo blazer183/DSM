@@ -1,5 +1,4 @@
-//包含pull_remote_page(page_base); getnodeid(); get_shared_memsize(); get_shared_addrbase();
-
+//包含pull_remote_page(page_base); join_cluster();
 #include "net/protocol.h"
 #include "net/dsm_protocol.h"
 #include "dsm.h"
@@ -8,14 +7,7 @@ void pull_remote_page(uintptr_t page_base){
     
 }
 
-int dsm_getnodeid(void){
-    return NodeId;
-}
-
-size_t get_shared_memsize(void){
-    //网络通信实现
-}
-
-void* get_shared_addrbase(void){
-    //网络通信实现
+void join_cluster(){
+    //模拟加入集群的操作
+    //给全局变量赋值
 }

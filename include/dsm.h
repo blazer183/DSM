@@ -38,7 +38,7 @@ extern struct PageTable *PageTable;        // 页表句柄
 extern struct LockTable *LockTable;        // 锁表句柄
 extern struct BindTable *BindTable;        // Bind 表句柄
 
-extern size_t SharedPages;                 // 页表大小
+extern size_t SharedPages;                 // 共享区有几页
 
 extern int NodeId;            // 集群ID
 
