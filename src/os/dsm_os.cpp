@@ -1,11 +1,17 @@
 // 包含 dsm_init , 会调用 client_end 里的 getnodeid(); get_shared_memsize(); get_shared_addrbase();
 
+#include <arpa/inet.h>
+#include <cerrno>
+#include <cstring>
+#include <cstdlib>
 #include <iostream>
 #include <new>
 #include <system_error>
 #include <thread>
+#include <unistd.h>
 
 #include "dsm.h"
+#include "net/protocol.h"
 #include "os/bind_table.h"
 #include "os/lock_table.h"
 #include "os/page_table.h"
@@ -28,7 +34,7 @@ void *SharedAddrBase = nullptr;
 
 namespace {
 
-constexpr int kDefaultListenPort = 9000;
+constexpr int kDefaultListenPort = 9999;
 
 bool LaunchListenerThread()
 {
@@ -44,7 +50,7 @@ bool LaunchListenerThread()
     }
 }
 
-bool JoinClusterAndFetchMetadata(int argc, char **argv, int dsm_memsize)
+bool JoinClusterAndFetchMetadata(int argc, char **argv, int dsm_memsize)    //argc argv
 {
     (void)argc;
     (void)argv;
@@ -86,7 +92,7 @@ bool SetupSharedRegionAndBarrier()
 
 } // namespace
 
-int dsm_init(int argc, char *argv[], int dsm_memsize)
+int dsm_init(int argc, char *argv[], int dsm_memsize)       //argc argv用于传递
 {
     if (!LaunchListenerThread())
         return -1;

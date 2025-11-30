@@ -3,26 +3,27 @@
 # ================= 1. 全局配置 (请修改这里) =================
 
 # --- 项目路径 ---
-SOURCE_DIR="/home/heqizheng/dsm"        # 你的源码根目录
-BUILD_CMD="g++ src/os/dsm.cpp src/network/connection.cpp -Iinclude -o dsm_app -lpthread" # 你的编译命令
+SOURCE_DIR="/home/heqizheng/Desktop/dsm"        # 你的源码根目录
+#BUILD_CMD="make -j4" # 你的编译命令
+BUILD_CMD="g++ test.cpp -o dsm_app" 
 EXE_NAME="dsm_app"                      # 编译生成的文件名
 
 # --- 部署目标路径 (所有机器统一) ---
 # 程序将被复制到这个文件夹运行
-REMOTE_DIR="/home/heqizheng/dsm_bin"
+REMOTE_DIR="/home/heqizheng/Desktop/dsm_bin"
 
 # --- DSM 运行参数 ---
-LEADER_IP="192.168.1.100"   # Master 的真实内网 IP (eth1)
-LEADER_PORT="8080"          # DSM 监听端口
+LEADER_IP="10.29.109.58"   # Master 的真实内网 IP (eth1)
+LEADER_PORT="9999"          # DSM 监听端口
 
 # --- 机器列表 (用户名@IP) ---
 # Master: 用于本地部署和启动
-MASTER_NODE="heqizheng@192.168.1.100"
+MASTER_NODE="heqizheng@10.29.109.58"
 
 # Workers: 用于远程分发和启动
 WORKER_NODES=(
     "heqizheng@10.112.100.112"
-    # "heqizheng@10.112.100.113"
+    
 )
 
 # 所有节点合集 (用于停止和启动)
