@@ -32,17 +32,20 @@ struct PageTable;
 struct LockTable;
 struct BindTable;
 
+
 //4.全局变量声明
 
-extern struct PageTable *PageTable;        // 页表句柄
-extern struct LockTable *LockTable;        // 锁表句柄
-extern struct BindTable *BindTable;        // Bind 表句柄
+extern struct PageTable *PageTable;         // 页表
+extern struct LockTable *LockTable;         // 锁表
+extern struct BindTable *BindTable;         // Bind表
 
-extern size_t SharedPages;                 // 共享区有几页
+extern size_t SharedPages;                  // 共享区有几页
 
-extern int NodeId;            // 集群ID
+extern int NodeId;                          // 集群ID
 
-extern void *SharedAddrBase;     // 共享区起始地址
+extern void *SharedAddrBase;                // 共享区起始地址
+
+extern int ProcNum;                         // 进程总数
 
 //5.全局函数声明
 
@@ -51,10 +54,10 @@ int dsm_init(int argc, char *argv[], int dsm_memsize);
 int dsm_finalize(void);
 int dsm_getnodeid(void);
 
-int dsm_mutex_init(dsm_mutex_t *mutex, void *attr);
-int dsm_mutex_destroy(dsm_mutex_t *mutex);
-int dsm_mutex_lock(dsm_mutex_t *mutex);
-int dsm_mutex_unlock(dsm_mutex_t *mutex);
+int dsm_mutex_init();
+int dsm_mutex_destroy(int *mutex);
+int dsm_mutex_lock(int *mutex);
+int dsm_mutex_unlock(int *mutex);
 
 void dsm_bind(void *addr, const char *name, size_t offset, size_t size);
 void dsm_barrier(void);
