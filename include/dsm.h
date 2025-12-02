@@ -4,6 +4,8 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <vector>
+#include <string>
 
 #if defined(__cplusplus)
 extern "C" {
@@ -40,19 +42,22 @@ extern struct LockTable *LockTable;         // 锁表
 extern struct BindTable *BindTable;         // Bind表
 
 extern size_t SharedPages;                  // 共享区有几页
-
 extern int NodeId;                          // 集群ID
-
 extern void *SharedAddrBase;                // 共享区起始地址
-
 extern int ProcNum;                         // 进程总数
+extern int WorkerNodeNum;                   // Worker节点总数
+extern std::vector<std::string> WorkerNodeIps;  // Worker节点IP列表
 
 //5.全局函数声明
 
-int dsm_init(int argc, char *argv[], int dsm_memsize);  
+int dsm_init(int dsm_memsize);  
 /*创建监听线程，加入集群并获取id，初始化页表，锁表，Bind表，开辟共享区，初始化barrier*/
 int dsm_finalize(void);
 int dsm_getnodeid(void);
+
+// 地址映射函数
+std::string GetPodIp(int pod_id);      // 根据PodID查找IP
+int GetPodPort(int pod_id);            // 根据PodID查找端口
 
 int dsm_mutex_init();
 int dsm_mutex_destroy(int *mutex);

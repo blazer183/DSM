@@ -1,165 +1,173 @@
-// src/concurrent/dsm_daemon.cpp
+// src/concurrent/concurrent_daemon.cpp
+// ¼ò»¯°æ±¾£º½öÊµÏÖ Barrier Í¬²½ËùĞèµÄ JOIN_REQ/ACK ´¦Àí
 
 #include <iostream>
 #include <thread>
 #include <vector>
+#include <mutex>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include <arpa/inet.h> 
+#include <arpa/inet.h>
 #include <cstring>
-
 
 #include "concurrent/concurrent_core.h"
 #include "net/protocol.h"
+#include "dsm.h"
 
+// È«¾Ö×´Ì¬£ºJOIN ÇëÇóÊÕ¼¯
+namespace {
+    std::mutex join_mutex;
+    std::vector<int> joined_fds;        // ÒÑÁ¬½ÓµÄ¿Í»§¶Ë socket (¿ÉÒÔË«ÏòÍ¨ĞÅ)
+    bool barrier_ready = false;         // ÊÇ·ñËùÓĞ½ø³ÌÒÑ¾ÍĞ÷
+}
 
-// å•ä¸ªå¯¹ç­‰èŠ‚ç‚¹(Peer)çš„å¤„ç†çº¿ç¨‹
-// è´Ÿè´£ï¼šæ­»å¾ªç¯è¯»å– Header -> è¯»å– Payload -> åˆ†å‘ç»™å¯¹åº”å‡½æ•°
+// µ¥¸ö¿Í»§¶ËÁ¬½Ó´¦ÀíÏß³Ì
+// ²ÎÊı connfd: accept() ·µ»ØµÄÒÑÁ¬½Ó socket£¬ÕâÊÇÓë¿Í»§¶ËÍ¨ĞÅµÄÎ¨Ò»Í¨µÀ
+// ×¢Òâ£ºpayload ÖĞµÄ listen_port ÊÇ¿Í»§¶ËµÄ daemon ¼àÌı¶Ë¿Ú£¬²»ÊÇÓÃÀ´Á¬½ÓµÄ
 void peer_handler(int connfd) {
     rio_t rp;
     rio_readinit(&rp, connfd);
 
     dsm_header_t header;
-    std::vector<char> buffer; // åŠ¨æ€ç¼“å†²åŒº
+    payload_join_req_t join_payload;
 
-    while (true) {
-        // 1. è¯»å–å¤´éƒ¨ (Blocking, robust)
-        // å¦‚æœå¯¹æ–¹æ²¡æœ‰å‘æ•°æ®ï¼Œè¿™é‡Œä¼šé˜»å¡æŒ‚èµ·ï¼Œä¸æ¶ˆè€— CPU
-        ssize_t n = rio_readn(&rp, &header, sizeof(dsm_header_t));
-        if (n != sizeof(dsm_header_t)) {
-            // è¿”å› 0 è¡¨ç¤ºå¯¹æ–¹å…³é—­è¿æ¥ï¼Œè¿”å› -1 è¡¨ç¤ºå‡ºé”™
-            // std::cout << "[DSM] Peer disconnected (fd: " << connfd << ")" << std::endl;
-            close(connfd);
-            return;
-        }
+    // ¶ÁÈ¡ÏûÏ¢Í·
+    ssize_t n = rio_readn(&rp, &header, sizeof(dsm_header_t));
+    if (n != sizeof(dsm_header_t)) {
+        std::cerr << "[DSM Daemon] ¶ÁÈ¡Í·²¿Ê§°Ü£¬¹Ø±ÕÁ¬½Ó" << std::endl;
+        close(connfd);
+        return;
+    }
 
-        // 2. å‡†å¤‡ç¼“å†²åŒºè¯»å– Payload
-        if (header.payload_len > 0) {
-            // å®‰å…¨æ£€æŸ¥ï¼šé™åˆ¶æœ€å¤§ 16MB (å®¹çº³è¶…å¤§é¡µæˆ–å¤§é‡ Diff)
-            if (header.payload_len > 16 * 1024 * 1024) { 
-                std::cerr << "[DSM] Fatal: Payload too big (" << header.payload_len << ")!" << std::endl;
-                break;
-            }
-            
-            // è°ƒæ•´ buffer å¤§å°
-            if (buffer.size() < header.payload_len) {
-                buffer.resize(header.payload_len);
-            }
-            
-            // è¯»å–å®Œæ•´è´Ÿè½½
-            n = rio_readn(&rp, buffer.data(), header.payload_len);
-            if (n != header.payload_len) {
-                std::cerr << "[DSM] Read payload failed!" << std::endl;
-                break;
-            }
-        }
+    // ÑéÖ¤ÏûÏ¢ÀàĞÍ
+    if (header.type != DSM_MSG_JOIN_REQ) {
+        std::cerr << "[DSM Daemon] ÊÕµ½·Ç JOIN_REQ ÏûÏ¢: 0x" 
+                  << std::hex << (int)header.type << std::dec << std::endl;
+        close(connfd);
+        return;
+    }
 
-        // 3. æ¶ˆæ¯åˆ†å‘ (Switch)
-        // æ³¨æ„ï¼šbuffer.data() è¿”å›çš„æ˜¯ char*ï¼Œæˆ‘ä»¬éœ€è¦æ ¹æ® type å¼ºè½¬ä¸ºå¯¹åº”çš„ struct æŒ‡é’ˆ
-        switch (header.type) {
-            
-            // --- A. è¯·æ±‚ç±» (åˆ«äººè¯·æ±‚æˆ‘) ---
-            case DSM_MSG_JOIN_REQ:
-                process_join_req(connfd, header, *(payload_join_req_t*)buffer.data());
-                break;
+    // ¶ÁÈ¡ Payload
+    if (header.payload_len != sizeof(payload_join_req_t)) {
+        std::cerr << "[DSM Daemon] JOIN_REQ payload ³¤¶È´íÎó" << std::endl;
+        close(connfd);
+        return;
+    }
 
-            case DSM_MSG_PAGE_REQ:
-                process_page_req(connfd, header, *(payload_page_req_t*)buffer.data());
-                break;
+    n = rio_readn(&rp, &join_payload, sizeof(payload_join_req_t));
+    if (n != sizeof(payload_join_req_t)) {
+        std::cerr << "[DSM Daemon] ¶ÁÈ¡ JOIN_REQ payload Ê§°Ü" << std::endl;
+        close(connfd);
+        return;
+    }
 
-            case DSM_MSG_LOCK_ACQ:
-                process_lock_acq(connfd, header, *(payload_lock_req_t*)buffer.data());
-                break;
-            
-            case DSM_MSG_OWNER_UPDATE:
-                process_owner_update(connfd, header, *(payload_owner_update_t*)buffer.data());
-                break;
+    std::cout << "[DSM Daemon] ÊÕµ½ JOIN_REQ: NodeId=" << header.src_node_id 
+              << ", DaemonPort=" << join_payload.listen_port 
+              << " (×¢Òâ£ºACK Í¨¹ıµ±Ç° socket ·¢ËÍ£¬²»Á¬½Ó´Ë¶Ë¿Ú)" << std::endl;
 
-            // --- B. å›å¤ç±» (æˆ‘è¯·æ±‚åçš„å“åº”) --- 
-            // ã€è¿™æ˜¯ä½ ç¼ºå¤±çš„éƒ¨åˆ†ï¼Œå¿…é¡»åŠ ä¸Šï¼ã€‘
+    // ¼ÓÈëÒÑÁ¬½ÓÁĞ±í
+    bool should_broadcast = false;
+    {
+        std::lock_guard<std::mutex> lock(join_mutex);
+        joined_fds.push_back(connfd);  // ±£´æ socket£¬ÕâÊÇÓë¿Í»§¶ËÍ¨ĞÅµÄÎ¨Ò»Í¨µÀ
+        
+        std::cout << "[DSM Daemon] µ±Ç°ÒÑÁ¬½Ó: " << joined_fds.size() 
+                  << " / " << ProcNum << std::endl;
 
-            case DSM_MSG_JOIN_ACK:
-                // å”¤é†’ concurrent_system_init
-                process_join_ack(connfd, header, *(payload_join_ack_t*)buffer.data());
-                break;
-
-            case DSM_MSG_PAGE_REP:
-                // å”¤é†’ dsm_request_page
-                // æ³¨æ„ï¼šè¿™é‡Œä¼  buffer.data() (char*) è¿›å»ï¼Œ
-                // å› ä¸ºå®ƒå¯èƒ½æ˜¯ struct (é‡å®šå‘)ï¼Œä¹Ÿå¯èƒ½æ˜¯ 4096å­—èŠ‚æ•°æ®
-                process_page_rep(connfd, header, buffer.data());
-                break;
-
-            case DSM_MSG_LOCK_REP:
-                // å”¤é†’ dsm_request_lock
-                process_lock_rep(connfd, header, *(payload_lock_rep_t*)buffer.data());
-                break;
-
-            case DSM_MSG_ACK:
-                process_ack(connfd, header, *(payload_ack_t*)buffer.data());
-                break;
-
-            default:
-                std::cout << "[DSM] Unknown Msg Type: 0x" << std::hex << (int)header.type << std::dec << std::endl;
+        // ¼ì²éÊÇ·ñËùÓĞ½ø³Ì¶¼ÒÑÁ¬½Ó£¨Ê¹ÓÃÈ«¾Ö±äÁ¿ ProcNum£©
+        if (joined_fds.size() == static_cast<size_t>(ProcNum) && !barrier_ready) {
+            barrier_ready = true;
+            should_broadcast = true;
         }
     }
+
+    // Èç¹ûËùÓĞ½ø³Ì¾ÍĞ÷£¬ÅúÁ¿·¢ËÍ ACK
+    if (should_broadcast) {
+        std::cout << "[DSM Daemon] ËùÓĞ½ø³ÌÒÑ¾ÍĞ÷£¬ÅúÁ¿·¢ËÍ JOIN_ACK..." << std::endl;
+
+        dsm_header_t ack_header;
+        ack_header.type = DSM_MSG_JOIN_ACK;
+        ack_header.payload_len = 0;  // ÎŞ payload
+        ack_header.src_node_id = NodeId;  // ¸æËß¿Í»§¶ËÕâÊÇË­·¢µÄ
+        ack_header.seq_num = 0;
+
+        std::lock_guard<std::mutex> lock(join_mutex);
+        for (int fd : joined_fds) {
+            // ¹Ø¼ü£ºÖ±½ÓÍ¨¹ı accept() µÃµ½µÄ socket ·¢ËÍ
+            // ¿Í»§¶ËµÄ barrier() º¯ÊıÔÚ rio_readn() ´¦×èÈûµÈ´ıÕâ¸ö ACK
+            ssize_t nw = write(fd, &ack_header, sizeof(dsm_header_t));
+            if (nw != sizeof(dsm_header_t)) {
+                std::cerr << "[DSM Daemon] ·¢ËÍ ACK µ½ fd=" << fd << " Ê§°Ü" << std::endl;
+            } else {
+                std::cout << "[DSM Daemon] ÒÑ·¢ËÍ JOIN_ACK µ½ fd=" << fd << std::endl;
+            }
+        }
+
+        std::cout << "[DSM Daemon] ? Barrier Í¬²½Íê³É£¡" << std::endl;
+    }
+
+    // ±£³ÖÁ¬½Ó´ò¿ª£¬ÓÉ¿Í»§¶Ë¾ö¶¨ºÎÊ±¹Ø±Õ
+    // »òÕßÓÃÓÚºóĞøÍ¨ĞÅ£¨Èç PAGE_REQ/LOCK_REQ£©
 }
 
-// ä¸»ç›‘å¬å‡½æ•° (éœ€è¦åœ¨ main æˆ–åˆå§‹åŒ–ä¸­å¯åŠ¨)
+// Ö÷¼àÌıÏß³Ì
 void dsm_start_daemon(int port) {
     int listenfd, connfd;
     struct sockaddr_in clientaddr;
     socklen_t clientlen;
     struct sockaddr_in serveraddr;
 
+    // 1. ´´½¨¼àÌı socket
     listenfd = socket(AF_INET, SOCK_STREAM, 0);
     if (listenfd < 0) {
-        perror("socket failed");
-        return;
-    }
-    
-    // å…è®¸ç«¯å£å¤ç”¨
-    int optval = 1;
-    if (setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, (const void *)&optval , sizeof(int)) < 0) {
-        perror("setsockopt failed");
+        perror("[DSM Daemon] socket ´´½¨Ê§°Ü");
         return;
     }
 
-    bzero((char *) &serveraddr, sizeof(serveraddr));
+    // 2. ÔÊĞí¶Ë¿Ú¸´ÓÃ£¨±ÜÃâ TIME_WAIT ×´Ì¬µ¼ÖÂ°ó¶¨Ê§°Ü£©
+    int optval = 1;
+    if (setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, 
+                   (const void *)&optval, sizeof(int)) < 0) {
+        perror("[DSM Daemon] setsockopt Ê§°Ü");
+        close(listenfd);
+        return;
+    }
+
+    // 3. °ó¶¨µ½Ö¸¶¨¶Ë¿Ú£¨9999 + NodeID£©
+    bzero((char *)&serveraddr, sizeof(serveraddr));
     serveraddr.sin_family = AF_INET;
-    serveraddr.sin_addr.s_addr = htonl(INADDR_ANY);
+    serveraddr.sin_addr.s_addr = htonl(INADDR_ANY);  // ¼àÌıËùÓĞÍø¿¨
     serveraddr.sin_port = htons((unsigned short)port);
 
     if (bind(listenfd, (struct sockaddr *)&serveraddr, sizeof(serveraddr)) < 0) {
-        perror("bind failed"); 
-        close(listenfd);
-        return;
-    }
-    
-    if (listen(listenfd, 1024) < 0) { // å¢åŠ  backlog é˜Ÿåˆ—é•¿åº¦
-        perror("listen failed");
+        perror("[DSM Daemon] bind Ê§°Ü");
         close(listenfd);
         return;
     }
 
-    std::cout << "[DSM] Daemon listening on port " << port << "..." << std::endl;
+    // 4. ¿ªÊ¼¼àÌı
+    if (listen(listenfd, 1024) < 0) {
+        perror("[DSM Daemon] listen Ê§°Ü");
+        close(listenfd);
+        return;
+    }
 
+    std::cout << "[DSM Daemon] ¿ªÊ¼¼àÌı¶Ë¿Ú " << port << "..." << std::endl;
+
+    // 5. Ñ­»·½ÓÊÜÁ¬½Ó
     while (1) {
         clientlen = sizeof(clientaddr);
         connfd = accept(listenfd, (struct sockaddr *)&clientaddr, &clientlen);
         if (connfd < 0) {
-            // accept å¯èƒ½ä¼šå› ä¸ºä¿¡å·ä¸­æ–­è€Œå¤±è´¥ï¼Œcontinue å³å¯
-            continue; 
+            continue;  // accept ¿ÉÄÜÒòĞÅºÅÖĞ¶Ï£¬¼ÌĞø¼´¿É
         }
-        
-        // æ‰“å°è¿æ¥ä¿¡æ¯ (å¯é€‰)
-        // char client_ip[INET_ADDRSTRLEN];
-        // inet_ntop(AF_INET, &(clientaddr.sin_addr), client_ip, INET_ADDRSTRLEN);
-        // std::cout << "[DSM] Accepted connection from " << client_ip << std::endl;
 
-        // å¯åŠ¨ç‹¬ç«‹çº¿ç¨‹å¤„ç†è¯¥è¿æ¥
+        // 6. ÎªÃ¿¸öÁ¬½ÓÆô¶¯¶ÀÁ¢Ïß³Ì´¦Àí
+        //    connfd ÊÇÒ»¸öÍêÕûµÄË«ÏòÍ¨ĞÅÍ¨µÀ£º
+        //    - Ïß³Ì¿ÉÒÔ´ÓËü read() ½ÓÊÕÏûÏ¢
+        //    - Ïß³Ì¿ÉÒÔÏòËü write() ·¢ËÍ»Ø¸´
         std::thread t(peer_handler, connfd);
-        t.detach(); // åˆ†ç¦»çº¿ç¨‹ï¼Œè®©å®ƒè‡ªå·±åœ¨åå°è¿è¡Œï¼Œç»“æŸåè‡ªåŠ¨å›æ”¶
+        t.detach();  // ·ÖÀëÏß³Ì£¬ÈÃËü×Ô¼ºÔËĞĞ
     }
 }

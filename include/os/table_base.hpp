@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <limits>
 #include <unordered_map>
+#include <string>
 
 template <typename Key, typename Record, typename Map = std::unordered_map<Key, Record>>
 class TableBase {
@@ -69,5 +70,8 @@ protected:
     map_type entries_;
     std::size_t capacity_;
 };
+
+std::string GetPodIp(int pod_id);
+int GetPodPort(int pod_id);
 
 #endif /* OS_TABLE_BASE_HPP */
