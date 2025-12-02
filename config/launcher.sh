@@ -157,7 +157,7 @@ echo ""
 echo " Log monitoring commands:"
 echo " Leader log: ssh $MASTER_NODE 'tail -f /tmp/dsm_leader.log'"
 if [ $WORKER_COUNT -gt 0 ]; then
-    echo " Worker logs: ssh ${WORKER_NODES[0]} 'tail -f /tmp/dsm_pod_*.log'"
+    echo " Worker logs: ssh <usr@ip> 'tail -f /tmp/dsm_pod_*.log'"
     echo " (or specify a specific Pod: dsm_pod_1.log, dsm_pod_2.log, ...)"
 fi
 echo ""

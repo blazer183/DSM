@@ -93,14 +93,26 @@ void peer_handler(int connfd) {
         ack_header.seq_num = 0;
 
         std::lock_guard<std::mutex> lock(join_mutex);
-        for (int fd : joined_fds) {
-            // 关键：直接通过 accept() 得到的 socket 发送
-            // 客户端的 barrier() 函数在 rio_readn() 处阻塞等待这个 ACK
+        
+        // Send ACK to all worker processes first (all except the last one which is leader)
+        for (size_t i = 0; i < joined_fds.size() - 1; i++) {
+            int fd = joined_fds[i];
             ssize_t nw = write(fd, &ack_header, sizeof(dsm_header_t));
             if (nw != sizeof(dsm_header_t)) {
                 std::cerr << "[DSM Daemon] Failed to send ACK to fd=" << fd << std::endl;
             } else {
                 std::cout << "[DSM Daemon] Sent JOIN_ACK to fd=" << fd << std::endl;
+            }
+        }
+        
+        // Finally, send ACK to leader itself (last connection, the one who triggered this broadcast)
+        if (!joined_fds.empty()) {
+            int leader_fd = joined_fds.back();
+            ssize_t nw = write(leader_fd, &ack_header, sizeof(dsm_header_t));
+            if (nw != sizeof(dsm_header_t)) {
+                std::cerr << "[DSM Daemon] Failed to send ACK to leader fd=" << leader_fd << std::endl;
+            } else {
+                std::cout << "[DSM Daemon] Sent JOIN_ACK to leader fd=" << leader_fd << std::endl;
             }
         }
 
