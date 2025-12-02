@@ -1,6 +1,7 @@
 #include <csignal>
 #include <cstdlib>
 #include <cstring>
+#include <cstdint>
 #include <iostream>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -38,7 +39,7 @@ STATIC void segv_handler(int signo, siginfo_t* info, void* uctx)
               << reinterpret_cast<void*>(page_base) << '\n';
 
     // TODO: 拉取远端页、刷新版本号等
-    pull_remote_page(page_base);
+    //pull_remote_page(page_base);
 
     // 恢复页面权限为读写
     if (mprotect(reinterpret_cast<void*>(page_base), g_page_sz,

@@ -35,14 +35,14 @@ void peer_handler(int connfd) {
     // 读取消息头
     ssize_t n = rio_readn(&rp, &header, sizeof(dsm_header_t));
     if (n != sizeof(dsm_header_t)) {
-        std::cerr << "[DSM Daemon] 读取头部失败，关闭连接" << std::endl;
+        std::cerr << "[DSM Daemon] Failed to read header, closing connection" << std::endl;
         close(connfd);
         return;
     }
 
     // 验证消息类型
     if (header.type != DSM_MSG_JOIN_REQ) {
-        std::cerr << "[DSM Daemon] 收到非 JOIN_REQ 消息: 0x" 
+        std::cerr << "[DSM Daemon] Received non-JOIN_REQ message: 0x" 
                   << std::hex << (int)header.type << std::dec << std::endl;
         close(connfd);
         return;
@@ -50,21 +50,21 @@ void peer_handler(int connfd) {
 
     // 读取 Payload
     if (header.payload_len != sizeof(payload_join_req_t)) {
-        std::cerr << "[DSM Daemon] JOIN_REQ payload 长度错误" << std::endl;
+        std::cerr << "[DSM Daemon] JOIN_REQ payload length error" << std::endl;
         close(connfd);
         return;
     }
 
     n = rio_readn(&rp, &join_payload, sizeof(payload_join_req_t));
     if (n != sizeof(payload_join_req_t)) {
-        std::cerr << "[DSM Daemon] 读取 JOIN_REQ payload 失败" << std::endl;
+        std::cerr << "[DSM Daemon] Failed to read JOIN_REQ payload" << std::endl;
         close(connfd);
         return;
     }
 
-    std::cout << "[DSM Daemon] 收到 JOIN_REQ: NodeId=" << header.src_node_id 
+    std::cout << "[DSM Daemon] Received JOIN_REQ: NodeId=" << header.src_node_id 
               << ", DaemonPort=" << join_payload.listen_port 
-              << " (注意：ACK 通过当前 socket 发送，不连接此端口)" << std::endl;
+              << " (Note: ACK sent via current socket, not connecting to this port)" << std::endl;
 
     // 加入已连接列表
     bool should_broadcast = false;
@@ -72,7 +72,7 @@ void peer_handler(int connfd) {
         std::lock_guard<std::mutex> lock(join_mutex);
         joined_fds.push_back(connfd);  // 保存 socket，这是与客户端通信的唯一通道
         
-        std::cout << "[DSM Daemon] 当前已连接: " << joined_fds.size() 
+        std::cout << "[DSM Daemon] Currently connected: " << joined_fds.size() 
                   << " / " << ProcNum << std::endl;
 
         // 检查是否所有进程都已连接（使用全局变量 ProcNum）
@@ -84,7 +84,7 @@ void peer_handler(int connfd) {
 
     // 如果所有进程就绪，批量发送 ACK
     if (should_broadcast) {
-        std::cout << "[DSM Daemon] 所有进程已就绪，批量发送 JOIN_ACK..." << std::endl;
+        std::cout << "[DSM Daemon] All processes ready, broadcasting JOIN_ACK..." << std::endl;
 
         dsm_header_t ack_header;
         ack_header.type = DSM_MSG_JOIN_ACK;
@@ -98,13 +98,13 @@ void peer_handler(int connfd) {
             // 客户端的 barrier() 函数在 rio_readn() 处阻塞等待这个 ACK
             ssize_t nw = write(fd, &ack_header, sizeof(dsm_header_t));
             if (nw != sizeof(dsm_header_t)) {
-                std::cerr << "[DSM Daemon] 发送 ACK 到 fd=" << fd << " 失败" << std::endl;
+                std::cerr << "[DSM Daemon] Failed to send ACK to fd=" << fd << std::endl;
             } else {
-                std::cout << "[DSM Daemon] 已发送 JOIN_ACK 到 fd=" << fd << std::endl;
+                std::cout << "[DSM Daemon] Sent JOIN_ACK to fd=" << fd << std::endl;
             }
         }
 
-        std::cout << "[DSM Daemon] ? Barrier 同步完成！" << std::endl;
+        std::cout << "[DSM Daemon] ? Barrier synchronization complete!" << std::endl;
     }
 
     // 保持连接打开，由客户端决定何时关闭
@@ -121,7 +121,7 @@ void dsm_start_daemon(int port) {
     // 1. 创建监听 socket
     listenfd = socket(AF_INET, SOCK_STREAM, 0);
     if (listenfd < 0) {
-        perror("[DSM Daemon] socket 创建失败");
+        perror("[DSM Daemon] socket creation failed");
         return;
     }
 
@@ -129,7 +129,7 @@ void dsm_start_daemon(int port) {
     int optval = 1;
     if (setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, 
                    (const void *)&optval, sizeof(int)) < 0) {
-        perror("[DSM Daemon] setsockopt 失败");
+        perror("[DSM Daemon] setsockopt failed");
         close(listenfd);
         return;
     }
@@ -141,19 +141,19 @@ void dsm_start_daemon(int port) {
     serveraddr.sin_port = htons((unsigned short)port);
 
     if (bind(listenfd, (struct sockaddr *)&serveraddr, sizeof(serveraddr)) < 0) {
-        perror("[DSM Daemon] bind 失败");
+        perror("[DSM Daemon] bind failed");
         close(listenfd);
         return;
     }
 
     // 4. 开始监听
     if (listen(listenfd, 1024) < 0) {
-        perror("[DSM Daemon] listen 失败");
+        perror("[DSM Daemon] listen failed");
         close(listenfd);
         return;
     }
 
-    std::cout << "[DSM Daemon] 开始监听端口 " << port << "..." << std::endl;
+    std::cout << "[DSM Daemon] Listening on port " << port << "..." << std::endl;
 
     // 5. 循环接受连接
     while (1) {

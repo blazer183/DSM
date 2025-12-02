@@ -7,9 +7,7 @@
 #include <vector>
 #include <string>
 
-#if defined(__cplusplus)
-extern "C" {
-#endif
+
 
 /* ————————————————————！！！！！重要！！！！！————————————————————————
 
@@ -55,10 +53,6 @@ int dsm_init(int dsm_memsize);
 int dsm_finalize(void);
 int dsm_getnodeid(void);
 
-// 地址映射函数
-std::string GetPodIp(int pod_id);      // 根据PodID查找IP
-int GetPodPort(int pod_id);            // 根据PodID查找端口
-
 int dsm_mutex_init();
 int dsm_mutex_destroy(int *mutex);
 int dsm_mutex_lock(int *mutex);
@@ -68,8 +62,9 @@ void dsm_bind(void *addr, const char *name, size_t offset, size_t size);
 void dsm_barrier(void);
 void *dsm_malloc(size_t size);
 
-#if defined(__cplusplus)
-}
-#endif
+
+
+std::string GetPodIp(int pod_id);      // 根据PodID查找IP
+int GetPodPort(int pod_id);            // 根据PodID查找端口
 
 #endif /* DSM_H */

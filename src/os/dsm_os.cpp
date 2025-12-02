@@ -194,11 +194,11 @@ bool InitDataStructs(int dsm_memsize)
 
     // 初始化页表、锁表、Bind表
     if (PageTable == nullptr)
-        PageTable = new (::std::nothrow) ::PageTable();
+        PageTable = new (::std::nothrow) class PageTable();
     if (LockTable == nullptr)
-        LockTable = new (::std::nothrow) ::LockTable();
+        LockTable = new (::std::nothrow) class LockTable();
     if (BindTable == nullptr)
-        BindTable = new (::std::nothrow) ::BindTable();
+        BindTable = new (::std::nothrow) class BindTable();
     const bool ok = (PageTable != nullptr) && (LockTable != nullptr) && (BindTable != nullptr);
     if (!ok){
         std::cerr << "[dsm] failed to allocate metadata tables" << std::endl;
@@ -262,9 +262,15 @@ int dsm_init(int dsm_memsize)       //argc argv用于传递
 {
     if (!FetchGlobalData(dsm_memsize))
         return -1;
+    sleep(1); //确保监听线程启动
     if (!InitDataStructs(dsm_memsize))
-        return -1;
+        return -2;
     if(!barrier())
-        return -1;
+        return -3;
     return 0;
+}
+
+
+int dsm_getnodeid(void){
+    return NodeId;
 }
