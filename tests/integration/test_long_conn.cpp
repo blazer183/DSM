@@ -9,7 +9,9 @@ int main() {
     // 模拟自己是 Worker (Node 2)，监听端口 9527，Manager 在 127.0.0.1
     // 这一步内部会建立到 Manager 的长连接，并存入 node_sockets[1]
     std::cout << "[Step 1] Initializing System..." << std::endl;
-    concurrent_system_init(9527, "127.0.0.1", false);
+    // 初始化系统，启动 Worker 线程
+    
+    (9527, "127.0.0.1", false);
 
     // 给一点时间让后台线程跑起来
     sleep(1);

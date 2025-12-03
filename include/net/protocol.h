@@ -74,13 +74,18 @@ typedef struct {
 
 // ---------------- A. 初始化模块 ----------------
 
+// [DSM_MSG_JOIN_REQ] 加入请求
+// 负载：通常为空，或者是自身的监听端口
+typedef struct {
+    uint16_t listen_port;    // 告诉 Leader 我在哪个端口听
+} __attribute__((packed)) payload_join_req_t;
 
 
 // [DSM_MSG_JOIN_ACK]
 typedef struct {
     uint16_t assigned_node_id;  // 分配给新人的 ID
     uint16_t node_count;        // 总节点数 (用于 Hash 计算)
-    uint64_t dsm_mem_size;      // 共享内存总大小
+    
 } __attribute__((packed)) payload_join_ack_t;
 
 

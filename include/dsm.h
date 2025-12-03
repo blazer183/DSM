@@ -48,6 +48,8 @@ extern int ProcNum;                         // 进程总数
 extern int WorkerNodeNum;                   // Worker节点总数
 extern std::vector<std::string> WorkerNodeIps;  // Worker节点IP列表
 
+extern int next_node_id;              // 下一个分配的节点ID
+
 //5.全局函数声明
 
 int dsm_init(int dsm_memsize);  
@@ -61,7 +63,7 @@ int dsm_mutex_lock(int *mutex);
 int dsm_mutex_unlock(int *mutex);
 
 void dsm_bind(void *addr, const char *name);
-void dsm_barrier(void);
+bool dsm_barrier(void);
 void *dsm_malloc(size_t size);
 
 

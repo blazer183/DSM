@@ -50,6 +50,8 @@ STATIC int LockNum = 0;
 STATIC void * SharedAddrCurrentLoc = nullptr;   //当前共享区分配位置
 
 
+
+
 std::string GetPodIp(int pod_id) {
     if (pod_id == 0) {
         // Leader Pod
@@ -332,7 +334,7 @@ void dsm_bind(void *addr, const char *name){
 }
 
 void *dsm_malloc(size_t size){
-    if(SharedAddrCurrentLoc + size > SharedAddrBase + SharedPages * PageSize){
+    if(SharedAddrCurrentLoc + size > SharedAddrBase + SharedPages * PAGESIZE){
         std::cerr << "[dsm_malloc] Out of shared memory!" << std::endl;
         return nullptr;
     }

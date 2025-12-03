@@ -59,7 +59,6 @@ void peer_handler(int connfd) {
         // 注意：buffer.data() 返回的是 char*，我们需要根据 type 强转为对应的 struct 指针
         switch (header.type) {
             
-            // --- A. 请求类 (别人请求我) ---
             case DSM_MSG_JOIN_REQ:
                 process_join_req(connfd, header, *(payload_join_req_t*)buffer.data());
                 break;
@@ -75,8 +74,6 @@ void peer_handler(int connfd) {
             case DSM_MSG_OWNER_UPDATE:
                 process_owner_update(connfd, header, *(payload_owner_update_t*)buffer.data());
                 break;
-
-           
 
             default:
                 std::cout << "[DSM] Unknown Msg Type: 0x" << std::hex << (int)header.type << std::dec << std::endl;
@@ -130,11 +127,7 @@ void dsm_start_daemon(int port) {
             // accept 可能会因为信号中断而失败，continue 即可
             continue; 
         }
-        
-        // 打印连接信息 (可选)
-        // char client_ip[INET_ADDRSTRLEN];
-        // inet_ntop(AF_INET, &(clientaddr.sin_addr), client_ip, INET_ADDRSTRLEN);
-        // std::cout << "[DSM] Accepted connection from " << client_ip << std::endl;
+    
 
         // 启动独立线程处理该连接
         std::thread t(peer_handler, connfd);

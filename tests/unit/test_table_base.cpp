@@ -6,14 +6,16 @@
 #include "os/page_table.h"
 #include "os/bind_table.h"
 #include "os/lock_table.h"
+#include "os/table_base.hpp"
+#include 
 
 int main()
 {
 	std::cout << "[DSM Test] TableBase derived structures demo" << std::endl;
 
 	// ---- Page table demo -------------------------------------------------
-	PageTable page_table(8);    //×î´óÈÝÁ¿8
-	page_table.Insert(0x1000, PageRecord{0});   //ÕâÀïÊÇÎÞÃû¶ÔÏó£¬ÓÃÓÚ´«µÝÖµ
+	PageTable page_table(8);    //ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½8
+	page_table.Insert(0x1000, PageRecord{0});   //ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ú´ï¿½ï¿½ï¿½Öµ
 	page_table.Update(0x1000, PageRecord{1});
 	if (auto *record = page_table.Find(0x1000)) {
 		std::cout << "Page 0x1000 owner=" << record->owner_id << std::endl;
