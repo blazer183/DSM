@@ -11,18 +11,18 @@ extern "C" {
 
 
 #define DSM_PAGE_SIZE 4096
-//£¡£¡£¡£¡£¡ÖØÒª£¡£¡£¡£¡ ±¾ÎÄ¼şÖĞµÄº¯ÊıÍêÈ«À´×Ôcaspp page 630-631
+//ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Òªï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½Ä¼ï¿½ï¿½ĞµÄºï¿½ï¿½ï¿½ï¿½ï¿½È«ï¿½ï¿½ï¿½ï¿½caspp page 630-631
 
 /* Constants ------------------------------------------------------------- */
-#define RIO_BUFSIZE 8192  /* rio»º³åÇø´óĞ¡ */
+#define RIO_BUFSIZE 8192  /* rioï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ğ¡ */
 /* Enumerations ---------------------------------------------------------- */
 
 /* Structures ------------------------------------------------------------ */
 typedef struct {
-    int rio_fd;                /* ÃèÊö·û */
-    int rio_cnt;               /* Î´¶Á×Ö½ÚÊı */
-    char *rio_bufptr;          /* ÏÂÒ»¸öÎ´¶Á×Ö½ÚµÄÖ¸Õë */
-    char rio_buf[RIO_BUFSIZE]; /* ÄÚ²¿»º³åÇø */
+    int rio_fd;                /* ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ */
+    int rio_cnt;               /* Î´ï¿½ï¿½ï¿½Ö½ï¿½ï¿½ï¿½ */
+    char *rio_bufptr;          /* ï¿½ï¿½Ò»ï¿½ï¿½Î´ï¿½ï¿½ï¿½Ö½Úµï¿½Ö¸ï¿½ï¿½ */
+    char rio_buf[RIO_BUFSIZE]; /* ï¿½Ú²ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ */
 } rio_t;
 /* Helpers --------------------------------------------------------------- */
 
@@ -33,107 +33,99 @@ ssize_t rio_readn(rio_t *rp, void *usrbuf, size_t n);
 
 
 
-//±¨ÎÄ¹æ·¶
+//ï¿½ï¿½ï¿½Ä¹æ·¶
 
 
-// ================= ÏûÏ¢ÀàĞÍÃ¶¾Ù =================
+// ================= ï¿½ï¿½Ï¢ï¿½ï¿½ï¿½ï¿½Ã¶ï¿½ï¿½ =================
 typedef enum {
-    // 1. ³õÊ¼»¯½×¶Î
-    DSM_MSG_JOIN_REQ      = 0x01,  // ĞÂ½ÚµãÉêÇë¼ÓÈë£¬ĞèÒªÍ³¼Æ½ÚµãÊıÁ¿£¬·ÖÅäID£¬È·¶¨¹²ÏíÇø»ùÖ·
-    DSM_MSG_JOIN_ACK      = 0x02,  // Leader·µ»ØÅäÖÃĞÅÏ¢(ID, »ùÖ·)£¬Ò²¾ÍÊÇºóĞø¸ºÔØ°üÀ¨IDºÍ»ùÖ·£¬×îºÃ¸ºÔØµÄÇ°8×Ö½ÚÊÇID£¬ºó8×Ö½ÚÊÇ»ùÖ·£¬Ä¬ÈÏ·µ»Ø0x4000000000
+    // 1. ï¿½ï¿½Ê¼ï¿½ï¿½ï¿½×¶ï¿½
+    DSM_MSG_JOIN_REQ      = 0x01,  // ï¿½Â½Úµï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ë£¬ï¿½ï¿½ÒªÍ³ï¿½Æ½Úµï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½IDï¿½ï¿½È·ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ö·
+    DSM_MSG_JOIN_ACK      = 0x02,  // Leaderï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ï¢(ID, ï¿½ï¿½Ö·)ï¿½ï¿½Ò²ï¿½ï¿½ï¿½Çºï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ø°ï¿½ï¿½ï¿½IDï¿½Í»ï¿½Ö·ï¿½ï¿½ï¿½ï¿½Ã¸ï¿½ï¿½Øµï¿½Ç°8ï¿½Ö½ï¿½ï¿½ï¿½IDï¿½ï¿½ï¿½ï¿½8ï¿½Ö½ï¿½ï¿½Ç»ï¿½Ö·ï¿½ï¿½Ä¬ï¿½Ï·ï¿½ï¿½ï¿½0x4000000000
 
-    // 2. Ò³ÃæÇëÇóÁ÷³Ì (ÈıÌøĞ­Òé)
-    DSM_MSG_PAGE_REQ      = 0x10,  // AÏòB·¢ËÍÒ³ÃæÇëÇó
-    DSM_MSG_PAGE_REP      = 0x11,  // ×¢Òâ£ºB²»»áÅĞ¶Ï×Ô¼ºÊÇprob owner»¹ÊÇreal owner,Ö»ÊÇÅĞ¶Ï×Ô¼ºÓëpagetableÀï¶ÔÓ¦Ò³µÄownerÊÇ·ñÒ»ÖÂ£¬
-                                   // Ò»ÖÂ¾Í·¢ËÍÒ³Ãæ£¬·ñÔò·µ»ØÒ³µÄownerµÄID¸øA£¬Èç¹ûÒ³ownerÊÇ-1£¬ÔòÏò0ºÅ½ø³Ìµ÷Êı¾İ
+    // 2. Ò³ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ (ï¿½ï¿½ï¿½ï¿½Ğ­ï¿½ï¿½)
+    DSM_MSG_PAGE_REQ      = 0x10,  // Aï¿½ï¿½Bï¿½ï¿½ï¿½ï¿½Ò³ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+    DSM_MSG_PAGE_REP      = 0x11,  // ×¢ï¿½â£ºBï¿½ï¿½ï¿½ï¿½ï¿½Ğ¶ï¿½ï¿½Ô¼ï¿½ï¿½ï¿½prob ownerï¿½ï¿½ï¿½ï¿½real owner,Ö»ï¿½ï¿½ï¿½Ğ¶ï¿½ï¿½Ô¼ï¿½ï¿½ï¿½pagetableï¿½ï¿½ï¿½Ó¦Ò³ï¿½ï¿½ownerï¿½Ç·ï¿½Ò»ï¿½Â£ï¿½
+                                   // Ò»ï¿½Â¾Í·ï¿½ï¿½ï¿½Ò³ï¿½æ£¬ï¿½ï¿½ï¿½ò·µ»ï¿½Ò³ï¿½ï¿½ownerï¿½ï¿½IDï¿½ï¿½Aï¿½ï¿½ï¿½ï¿½ï¿½Ò³ownerï¿½ï¿½-1ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½0ï¿½Å½ï¿½ï¿½Ìµï¿½ï¿½ï¿½ï¿½ï¿½
        
-    // 3. ËøÇëÇóÁ÷³Ì
-    DSM_MSG_LOCK_ACQ      = 0x20,  // Í¬ÉÏ
-    DSM_MSG_LOCK_REP      = 0x21,  // Í¬ÉÏ
+    // 3. ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+    DSM_MSG_LOCK_ACQ      = 0x20,  // Í¬ï¿½ï¿½
+    DSM_MSG_LOCK_REP      = 0x21,  // Í¬ï¿½ï¿½
     
-    // 4. Î¬»¤ÓëÈ·ÈÏ
-    DSM_MSG_OWNER_UPDATE  = 0x30,  // ¸æÖªManagerËùÓĞÈ¨ÒÑ±ä¸ü£¬Í¨¹ı±£ÁôÎ»Çø·ÖÒ³/Ëø
-    DSM_MSG_ACK           = 0xFF   // Í¨ÓÃÈ·ÈÏ (ÓÃÓÚÍ¬²½)
+    // 4. Î¬ï¿½ï¿½ï¿½ï¿½È·ï¿½ï¿½
+    DSM_MSG_OWNER_UPDATE  = 0x30,  // ï¿½ï¿½ÖªManagerï¿½ï¿½ï¿½ï¿½È¨ï¿½Ñ±ï¿½ï¿½ï¿½ï¿½Í¨ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Î»ï¿½ï¿½ï¿½ï¿½Ò³/ï¿½ï¿½
+    DSM_MSG_ACK           = 0xFF   // Í¨ï¿½ï¿½È·ï¿½ï¿½ (ï¿½ï¿½ï¿½ï¿½Í¬ï¿½ï¿½)
 } dsm_msg_type_t;
 
-// ================= Í¨ÓÃĞ­ÒéÍ· (12×Ö½Ú) =================
+// ================= Í¨ï¿½ï¿½Ğ­ï¿½ï¿½Í· (12ï¿½Ö½ï¿½) =================
 typedef struct {
     uint8_t  type;           // dsm_msg_type_t
-    uint8_t  unused;         // ±£ÁôÎ» (Ò³/ËøÅĞ¶Ï£»realowner/dataÅĞ¶Ï£©
-    uint16_t src_node_id;    // ·¢ËÍ·½ID (-1/255 ±íÊ¾Î´Öª)
-    uint32_t seq_num;        // ĞòÁĞºÅ (´¦ÀíÂÒĞò/¶ª°ü)
-    uint32_t payload_len;    // ºóĞø¸ºÔØ³¤¶È (²»º¬°üÍ·)
+    uint8_t  unused;         // ï¿½ï¿½ï¿½ï¿½Î» (Ò³/ï¿½ï¿½ï¿½Ğ¶Ï£ï¿½realowner/dataï¿½Ğ¶Ï£ï¿½
+    uint16_t src_node_id;    // ï¿½ï¿½ï¿½Í·ï¿½ID (-1/255 ï¿½ï¿½Ê¾Î´Öª)
+    uint32_t seq_num;        // ï¿½ï¿½ï¿½Ğºï¿½ (ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½/ï¿½ï¿½ï¿½ï¿½)
+    uint32_t payload_len;    // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ø³ï¿½ï¿½ï¿½ (ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Í·)
 } __attribute__((packed)) dsm_header_t;
 
 
-
-
-
-
-// ================= ÏêÏ¸¸ºÔØ¶¨Òå (Payloads) =================
-
-// ---------------- A. ³õÊ¼»¯Ä£¿é ----------------
-
 // [DSM_MSG_JOIN_REQ]
 typedef struct {
-    uint16_t listen_port;    // ¸æËß Leader ÎÒÔÚÄÄ¸ö¶Ë¿Ú¼àÌı
+    uint16_t listen_port;    // ï¿½ï¿½ï¿½ï¿½ Leader ï¿½ï¿½ï¿½ï¿½ï¿½Ä¸ï¿½ï¿½Ë¿Ú¼ï¿½ï¿½ï¿½
 } __attribute__((packed)) payload_join_req_t;
 
 // [DSM_MSG_JOIN_ACK]
 typedef struct {
-    uint16_t assigned_node_id;  // ·ÖÅä¸øĞÂÈËµÄ ID
-    uint16_t node_count;        // ×Ü½ÚµãÊı (ÓÃÓÚ Hash ¼ÆËã)
-    uint64_t dsm_mem_size;      // ¹²ÏíÄÚ´æ×Ü´óĞ¡
+    uint16_t assigned_node_id;  // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ëµï¿½ ID
+    uint16_t node_count;        // ï¿½Ü½Úµï¿½ï¿½ï¿½ (ï¿½ï¿½ï¿½ï¿½ Hash ï¿½ï¿½ï¿½ï¿½)
+    uint64_t dsm_mem_size;      // ï¿½ï¿½ï¿½ï¿½ï¿½Ú´ï¿½ï¿½Ü´ï¿½Ğ¡
 } __attribute__((packed)) payload_join_ack_t;
 
 
-// ---------------- B. Ò³Ãæ¹ÜÀíÄ£¿é ----------------
+// ---------------- B. Ò³ï¿½ï¿½ï¿½ï¿½ï¿½Ä£ï¿½ï¿½ ----------------
 
 // [DSM_MSG_PAGE_REQ] Requestor -> Manager
 typedef struct {
-    uint32_t page_index;        // ÇëÇóµÄÈ«¾ÖÒ³ºÅ
+    uint32_t page_index;        // ï¿½ï¿½ï¿½ï¿½ï¿½È«ï¿½ï¿½Ò³ï¿½ï¿½
 } __attribute__((packed)) payload_page_req_t;
 
 // [DSM_MSG_PAGE_REP] Manager -> RealOwner
-// º¬Òå£º"Node X ÏëÒª page_index£¬Êı¾İÔÚÄãÕâ£¬Äã·¢¸øËü"
+// ï¿½ï¿½ï¿½å£º"Node X ï¿½ï¿½Òª page_indexï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½â£¬ï¿½ã·¢ï¿½ï¿½ï¿½ï¿½"
 typedef struct {
-    uint32_t page_index;        // Ò³ºÅ
-    uint16_t requester_id;      // ÕæÕıÏëÒªÊı¾İµÄ½ÚµãID (RealOwnerÒª°ÑÊı¾İ·¢¸øËü)
+    uint32_t page_index;        // Ò³ï¿½ï¿½
+    uint16_t requester_id;      // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Òªï¿½ï¿½ï¿½İµÄ½Úµï¿½ID (RealOwnerÒªï¿½ï¿½ï¿½ï¿½ï¿½İ·ï¿½ï¿½ï¿½ï¿½ï¿½)
 } __attribute__((packed)) payload_page_rep_t;
 
 // [DSM_MSG_PAGE_DATA] RealOwner -> Requestor
-// Õâ¸ö°üÍ¨³£²»ĞèÒª struct ¶¨Òå£¬Ö±½Ó Header + 4096×Ö½ÚÊı¾İ
-// Èç¹ûĞèÒªÔªÊı¾İ£¬¿ÉÒÔÓÃ unused ×Ö¶Î
+// ï¿½ï¿½ï¿½ï¿½ï¿½Í¨ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Òª struct ï¿½ï¿½ï¿½å£¬Ö±ï¿½ï¿½ Header + 4096ï¿½Ö½ï¿½ï¿½ï¿½ï¿½ï¿½
+// ï¿½ï¿½ï¿½ï¿½ï¿½ÒªÔªï¿½ï¿½ï¿½İ£ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ unused ï¿½Ö¶ï¿½
 
 
-// ---------------- C. Ëø¹ÜÀíÄ£¿é ----------------
+// ---------------- C. ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ä£ï¿½ï¿½ ----------------
 
 // [DSM_MSG_LOCK_ACQ] / [DSM_MSG_LOCK_REL] Requestor -> Manager
 typedef struct {
-    uint32_t lock_id;           // Ëø ID
+    uint32_t lock_id;           // ï¿½ï¿½ ID
 } __attribute__((packed)) payload_lock_req_t;
 
-// [DSM_MSG_LOCK_REP] Manager -> Requestor (ÊÚÓèËø)
+// [DSM_MSG_LOCK_REP] Manager -> Requestor (ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½)
 typedef struct {
     uint32_t lock_id;
-    uint32_t invalid_set_count; // Scope Consistency: ĞèÒªÊ§Ğ§µÄÒ³ÊıÁ¿
-    // ½ô½Ó×ÅºóÃæ¿ÉÒÔÊÇ invalid_set ÁĞ±í
+    uint32_t invalid_set_count; // Scope Consistency: ï¿½ï¿½ÒªÊ§Ğ§ï¿½ï¿½Ò³ï¿½ï¿½ï¿½ï¿½
+    // ï¿½ï¿½ï¿½ï¿½ï¿½Åºï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ invalid_set ï¿½Ğ±ï¿½
     uint32_t realowner;
 
 } __attribute__((packed)) payload_lock_rep_t;
 
 
-// ---------------- D. Î¬»¤ÓëÈ·ÈÏ ----------------
+// ---------------- D. Î¬ï¿½ï¿½ï¿½ï¿½È·ï¿½ï¿½ ----------------
 
 // [DSM_MSG_OWNER_UPDATE] RealOwner -> Manager
 typedef struct {
-    uint32_t resource_id;    // Ò³ºÅ»òËøID
-    uint16_t new_owner_id;   // ×ÊÔ´ÏÖÔÚ¹éË­ÁË
+    uint32_t resource_id;    // Ò³ï¿½Å»ï¿½ï¿½ï¿½ID
+    uint16_t new_owner_id;   // ï¿½ï¿½Ô´ï¿½ï¿½ï¿½Ú¹ï¿½Ë­ï¿½ï¿½
 } __attribute__((packed)) payload_owner_update_t;
 
 // [DSM_MSG_ACK]
 typedef struct {
-    uint32_t target_seq;     // È·ÈÏÊÇ¶ÔÄÄ¸öÇëÇóµÄ»ØÓ¦
+    uint32_t target_seq;     // È·ï¿½ï¿½ï¿½Ç¶ï¿½ï¿½Ä¸ï¿½ï¿½ï¿½ï¿½ï¿½Ä»ï¿½Ó¦
     uint8_t  status;         // 0=OK, 1=Fail
 } __attribute__((packed)) payload_ack_t;
 
