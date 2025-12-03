@@ -31,6 +31,7 @@
 struct PageTable;
 struct LockTable;
 struct BindTable;
+struct SocketTable;
 
 
 //4.全局变量声明
@@ -38,6 +39,7 @@ struct BindTable;
 extern struct PageTable *PageTable;         // 页表
 extern struct LockTable *LockTable;         // 锁表
 extern struct BindTable *BindTable;         // Bind表
+extern struct SocketTable *SocketTable;     // Socket表
 
 extern size_t SharedPages;                  // 共享区有几页
 extern int NodeId;                          // 集群ID
@@ -58,7 +60,7 @@ int dsm_mutex_destroy(int *mutex);
 int dsm_mutex_lock(int *mutex);
 int dsm_mutex_unlock(int *mutex);
 
-void dsm_bind(void *addr, const char *name, size_t offset, size_t size);
+void dsm_bind(void *addr, const char *name);
 void dsm_barrier(void);
 void *dsm_malloc(size_t size);
 

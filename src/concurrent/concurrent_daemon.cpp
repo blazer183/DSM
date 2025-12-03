@@ -1,185 +1,143 @@
-// src/concurrent/concurrent_daemon.cpp
-// ¼ò»¯°æ±¾£º½öÊµÏÖ Barrier Í¬²½ËùĞèµÄ JOIN_REQ/ACK ´¦Àí
+// src/concurrent/dsm_daemon.cpp
 
 #include <iostream>
 #include <thread>
 #include <vector>
-#include <mutex>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include <arpa/inet.h>
+#include <arpa/inet.h> 
 #include <cstring>
+
 
 #include "concurrent/concurrent_core.h"
 #include "net/protocol.h"
-#include "dsm.h"
 
-// È«¾Ö×´Ì¬£ºJOIN ÇëÇóÊÕ¼¯
-namespace {
-    std::mutex join_mutex;
-    std::vector<int> joined_fds;        // ÒÑÁ¬½ÓµÄ¿Í»§¶Ë socket (¿ÉÒÔË«ÏòÍ¨ĞÅ)
-    bool barrier_ready = false;         // ÊÇ·ñËùÓĞ½ø³ÌÒÑ¾ÍĞ÷
-}
 
-// µ¥¸ö¿Í»§¶ËÁ¬½Ó´¦ÀíÏß³Ì
-// ²ÎÊı connfd: accept() ·µ»ØµÄÒÑÁ¬½Ó socket£¬ÕâÊÇÓë¿Í»§¶ËÍ¨ĞÅµÄÎ¨Ò»Í¨µÀ
-// ×¢Òâ£ºpayload ÖĞµÄ listen_port ÊÇ¿Í»§¶ËµÄ daemon ¼àÌı¶Ë¿Ú£¬²»ÊÇÓÃÀ´Á¬½ÓµÄ
+// å•ä¸ªå¯¹ç­‰èŠ‚ç‚¹(Peer)çš„å¤„ç†çº¿ç¨‹
+// è´Ÿè´£ï¼šæ­»å¾ªç¯è¯»å– Header -> è¯»å– Payload -> åˆ†å‘ç»™å¯¹åº”å‡½æ•°
 void peer_handler(int connfd) {
     rio_t rp;
     rio_readinit(&rp, connfd);
 
     dsm_header_t header;
-    payload_join_req_t join_payload;
+    std::vector<char> buffer; // åŠ¨æ€ç¼“å†²åŒº
 
-    // ¶ÁÈ¡ÏûÏ¢Í·
-    ssize_t n = rio_readn(&rp, &header, sizeof(dsm_header_t));
-    if (n != sizeof(dsm_header_t)) {
-        std::cerr << "[DSM Daemon] Failed to read header, closing connection" << std::endl;
-        close(connfd);
-        return;
-    }
-
-    // ÑéÖ¤ÏûÏ¢ÀàĞÍ
-    if (header.type != DSM_MSG_JOIN_REQ) {
-        std::cerr << "[DSM Daemon] Received non-JOIN_REQ message: 0x" 
-                  << std::hex << (int)header.type << std::dec << std::endl;
-        close(connfd);
-        return;
-    }
-
-    // ¶ÁÈ¡ Payload
-    if (header.payload_len != sizeof(payload_join_req_t)) {
-        std::cerr << "[DSM Daemon] JOIN_REQ payload length error" << std::endl;
-        close(connfd);
-        return;
-    }
-
-    n = rio_readn(&rp, &join_payload, sizeof(payload_join_req_t));
-    if (n != sizeof(payload_join_req_t)) {
-        std::cerr << "[DSM Daemon] Failed to read JOIN_REQ payload" << std::endl;
-        close(connfd);
-        return;
-    }
-
-    std::cout << "[DSM Daemon] Received JOIN_REQ: NodeId=" << header.src_node_id 
-              << ", DaemonPort=" << join_payload.listen_port 
-              << " (Note: ACK sent via current socket, not connecting to this port)" << std::endl;
-
-    // ¼ÓÈëÒÑÁ¬½ÓÁĞ±í
-    bool should_broadcast = false;
-    {
-        std::lock_guard<std::mutex> lock(join_mutex);
-        joined_fds.push_back(connfd);  // ±£´æ socket£¬ÕâÊÇÓë¿Í»§¶ËÍ¨ĞÅµÄÎ¨Ò»Í¨µÀ
-        
-        std::cout << "[DSM Daemon] Currently connected: " << joined_fds.size() 
-                  << " / " << ProcNum << std::endl;
-
-        // ¼ì²éÊÇ·ñËùÓĞ½ø³Ì¶¼ÒÑÁ¬½Ó£¨Ê¹ÓÃÈ«¾Ö±äÁ¿ ProcNum£©
-        if (joined_fds.size() == static_cast<size_t>(ProcNum) && !barrier_ready) {
-            barrier_ready = true;
-            should_broadcast = true;
+    while (true) {
+        // 1. è¯»å–å¤´éƒ¨ (Blocking, robust)
+        // å¦‚æœå¯¹æ–¹æ²¡æœ‰å‘æ•°æ®ï¼Œè¿™é‡Œä¼šé˜»å¡æŒ‚èµ·ï¼Œä¸æ¶ˆè€— CPU
+        ssize_t n = rio_readn(&rp, &header, sizeof(dsm_header_t));
+        if (n != sizeof(dsm_header_t)) {
+            // è¿”å› 0 è¡¨ç¤ºå¯¹æ–¹å…³é—­è¿æ¥ï¼Œè¿”å› -1 è¡¨ç¤ºå‡ºé”™
+            // std::cout << "[DSM] Peer disconnected (fd: " << connfd << ")" << std::endl;
+            close(connfd);
+            return;
         }
-    }
 
-    // Èç¹ûËùÓĞ½ø³Ì¾ÍĞ÷£¬ÅúÁ¿·¢ËÍ ACK
-    if (should_broadcast) {
-        std::cout << "[DSM Daemon] All processes ready, broadcasting JOIN_ACK..." << std::endl;
-
-        dsm_header_t ack_header;
-        ack_header.type = DSM_MSG_JOIN_ACK;
-        ack_header.payload_len = 0;  // ÎŞ payload
-        ack_header.src_node_id = NodeId;  // ¸æËß¿Í»§¶ËÕâÊÇË­·¢µÄ
-        ack_header.seq_num = 0;
-
-        std::lock_guard<std::mutex> lock(join_mutex);
-        
-        // Send ACK to all worker processes first (all except the last one which is leader)
-        for (size_t i = 0; i < joined_fds.size() - 1; i++) {
-            int fd = joined_fds[i];
-            ssize_t nw = write(fd, &ack_header, sizeof(dsm_header_t));
-            if (nw != sizeof(dsm_header_t)) {
-                std::cerr << "[DSM Daemon] Failed to send ACK to fd=" << fd << std::endl;
-            } else {
-                std::cout << "[DSM Daemon] Sent JOIN_ACK to fd=" << fd << std::endl;
+        // 2. å‡†å¤‡ç¼“å†²åŒºè¯»å– Payload
+        if (header.payload_len > 0) {
+            // å®‰å…¨æ£€æŸ¥ï¼šé™åˆ¶æœ€å¤§ 16MB (å®¹çº³è¶…å¤§é¡µæˆ–å¤§é‡ Diff)
+            if (header.payload_len > 16 * 1024 * 1024) { 
+                std::cerr << "[DSM] Fatal: Payload too big (" << header.payload_len << ")!" << std::endl;
+                break;
             }
-        }
-        
-        // Finally, send ACK to leader itself (last connection, the one who triggered this broadcast)
-        if (!joined_fds.empty()) {
-            int leader_fd = joined_fds.back();
-            ssize_t nw = write(leader_fd, &ack_header, sizeof(dsm_header_t));
-            if (nw != sizeof(dsm_header_t)) {
-                std::cerr << "[DSM Daemon] Failed to send ACK to leader fd=" << leader_fd << std::endl;
-            } else {
-                std::cout << "[DSM Daemon] Sent JOIN_ACK to leader fd=" << leader_fd << std::endl;
+            
+            // è°ƒæ•´ buffer å¤§å°
+            if (buffer.size() < header.payload_len) {
+                buffer.resize(header.payload_len);
+            }
+            
+            // è¯»å–å®Œæ•´è´Ÿè½½
+            n = rio_readn(&rp, buffer.data(), header.payload_len);
+            if (n != header.payload_len) {
+                std::cerr << "[DSM] Read payload failed!" << std::endl;
+                break;
             }
         }
 
-        std::cout << "[DSM Daemon] ? Barrier synchronization complete!" << std::endl;
-    }
+        // 3. æ¶ˆæ¯åˆ†å‘ (Switch)
+        // æ³¨æ„ï¼šbuffer.data() è¿”å›çš„æ˜¯ char*ï¼Œæˆ‘ä»¬éœ€è¦æ ¹æ® type å¼ºè½¬ä¸ºå¯¹åº”çš„ struct æŒ‡é’ˆ
+        switch (header.type) {
+            
+            // --- A. è¯·æ±‚ç±» (åˆ«äººè¯·æ±‚æˆ‘) ---
+            case DSM_MSG_JOIN_REQ:
+                process_join_req(connfd, header, *(payload_join_req_t*)buffer.data());
+                break;
 
-    // ±£³ÖÁ¬½Ó´ò¿ª£¬ÓÉ¿Í»§¶Ë¾ö¶¨ºÎÊ±¹Ø±Õ
-    // »òÕßÓÃÓÚºóĞøÍ¨ĞÅ£¨Èç PAGE_REQ/LOCK_REQ£©
+            case DSM_MSG_PAGE_REQ:
+                process_page_req(connfd, header, *(payload_page_req_t*)buffer.data());
+                break;
+
+            case DSM_MSG_LOCK_ACQ:
+                process_lock_acq(connfd, header, *(payload_lock_req_t*)buffer.data());
+                break;
+            
+            case DSM_MSG_OWNER_UPDATE:
+                process_owner_update(connfd, header, *(payload_owner_update_t*)buffer.data());
+                break;
+
+           
+
+            default:
+                std::cout << "[DSM] Unknown Msg Type: 0x" << std::hex << (int)header.type << std::dec << std::endl;
+        }
+    }
 }
 
-// Ö÷¼àÌıÏß³Ì
+// ä¸»ç›‘å¬å‡½æ•° (éœ€è¦åœ¨ main æˆ–åˆå§‹åŒ–ä¸­å¯åŠ¨)
 void dsm_start_daemon(int port) {
     int listenfd, connfd;
     struct sockaddr_in clientaddr;
     socklen_t clientlen;
     struct sockaddr_in serveraddr;
 
-    // 1. ´´½¨¼àÌı socket
     listenfd = socket(AF_INET, SOCK_STREAM, 0);
     if (listenfd < 0) {
-        perror("[DSM Daemon] socket creation failed");
+        perror("socket failed");
         return;
     }
-
-    // 2. ÔÊĞí¶Ë¿Ú¸´ÓÃ£¨±ÜÃâ TIME_WAIT ×´Ì¬µ¼ÖÂ°ó¶¨Ê§°Ü£©
+    
+    // å…è®¸ç«¯å£å¤ç”¨
     int optval = 1;
-    if (setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, 
-                   (const void *)&optval, sizeof(int)) < 0) {
-        perror("[DSM Daemon] setsockopt failed");
-        close(listenfd);
+    if (setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, (const void *)&optval , sizeof(int)) < 0) {
+        perror("setsockopt failed");
         return;
     }
 
-    // 3. °ó¶¨µ½Ö¸¶¨¶Ë¿Ú£¨9999 + NodeID£©
-    bzero((char *)&serveraddr, sizeof(serveraddr));
+    bzero((char *) &serveraddr, sizeof(serveraddr));
     serveraddr.sin_family = AF_INET;
-    serveraddr.sin_addr.s_addr = htonl(INADDR_ANY);  // ¼àÌıËùÓĞÍø¿¨
+    serveraddr.sin_addr.s_addr = htonl(INADDR_ANY);
     serveraddr.sin_port = htons((unsigned short)port);
 
     if (bind(listenfd, (struct sockaddr *)&serveraddr, sizeof(serveraddr)) < 0) {
-        perror("[DSM Daemon] bind failed");
+        perror("bind failed"); 
+        close(listenfd);
+        return;
+    }
+    
+    if (listen(listenfd, 1024) < 0) { // å¢åŠ  backlog é˜Ÿåˆ—é•¿åº¦
+        perror("listen failed");
         close(listenfd);
         return;
     }
 
-    // 4. ¿ªÊ¼¼àÌı
-    if (listen(listenfd, 1024) < 0) {
-        perror("[DSM Daemon] listen failed");
-        close(listenfd);
-        return;
-    }
+    std::cout << "[DSM] Daemon listening on port " << port << "..." << std::endl;
 
-    std::cout << "[DSM Daemon] Listening on port " << port << "..." << std::endl;
-
-    // 5. Ñ­»·½ÓÊÜÁ¬½Ó
     while (1) {
         clientlen = sizeof(clientaddr);
         connfd = accept(listenfd, (struct sockaddr *)&clientaddr, &clientlen);
         if (connfd < 0) {
-            continue;  // accept ¿ÉÄÜÒòĞÅºÅÖĞ¶Ï£¬¼ÌĞø¼´¿É
+            // accept å¯èƒ½ä¼šå› ä¸ºä¿¡å·ä¸­æ–­è€Œå¤±è´¥ï¼Œcontinue å³å¯
+            continue; 
         }
+        
+        // æ‰“å°è¿æ¥ä¿¡æ¯ (å¯é€‰)
+        // char client_ip[INET_ADDRSTRLEN];
+        // inet_ntop(AF_INET, &(clientaddr.sin_addr), client_ip, INET_ADDRSTRLEN);
+        // std::cout << "[DSM] Accepted connection from " << client_ip << std::endl;
 
-        // 6. ÎªÃ¿¸öÁ¬½ÓÆô¶¯¶ÀÁ¢Ïß³Ì´¦Àí
-        //    connfd ÊÇÒ»¸öÍêÕûµÄË«ÏòÍ¨ĞÅÍ¨µÀ£º
-        //    - Ïß³Ì¿ÉÒÔ´ÓËü read() ½ÓÊÕÏûÏ¢
-        //    - Ïß³Ì¿ÉÒÔÏòËü write() ·¢ËÍ»Ø¸´
+        // å¯åŠ¨ç‹¬ç«‹çº¿ç¨‹å¤„ç†è¯¥è¿æ¥
         std::thread t(peer_handler, connfd);
-        t.detach();  // ·ÖÀëÏß³Ì£¬ÈÃËü×Ô¼ºÔËĞĞ
+        t.detach(); // åˆ†ç¦»çº¿ç¨‹ï¼Œè®©å®ƒè‡ªå·±åœ¨åå°è¿è¡Œï¼Œç»“æŸåè‡ªåŠ¨å›æ”¶
     }
 }

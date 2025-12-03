@@ -39,8 +39,8 @@ ssize_t rio_readn(rio_t *rp, void *usrbuf, size_t n);
 // ================= 消息类型枚举 =================
 typedef enum {
     // 1. 初始化阶段
-    DSM_MSG_JOIN_REQ      = 0x01,  // 新节点申请加入，需要统计节点数量，分配ID，确定共享区基址
-    DSM_MSG_JOIN_ACK      = 0x02,  // Leader返回配置信息(ID, 基址)，也就是后续负载包括ID和基址，最好负载的前8字节是ID，后8字节是基址，默认返回0x4000000000
+    DSM_MSG_JOIN_REQ      = 0x01,  // 
+    DSM_MSG_JOIN_ACK      = 0x02,  // 
 
     // 2. 页面请求流程 (三跳协议)
     DSM_MSG_PAGE_REQ      = 0x10,  // A向B发送页面请求
@@ -74,10 +74,7 @@ typedef struct {
 
 // ---------------- A. 初始化模块 ----------------
 
-// [DSM_MSG_JOIN_REQ]
-typedef struct {
-    uint16_t listen_port;    // 告诉 Leader 我在哪个端口监听
-} __attribute__((packed)) payload_join_req_t;
+
 
 // [DSM_MSG_JOIN_ACK]
 typedef struct {

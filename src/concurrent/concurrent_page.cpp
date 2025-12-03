@@ -1,63 +1,63 @@
 #include <iostream>
 #include <mutex>
 #include <cstring>
-#include <sys/mman.h> // å¿…é¡»åŒ…å«ï¼Œç”¨äº mprotect
+#include <sys/mman.h> // ±ØĞë°üº¬£¬ÓÃÓÚ mprotect
 #include <unistd.h>
 
 #include "concurrent/concurrent_core.h"
 #include "net/protocol.h"
 
-// è¾…åŠ©å®ï¼šé¡µå¯¹é½
+// ¸¨Öúºê£ºÒ³¶ÔÆë
 #define PAGE_ALIGN_DOWN(addr) ((void*)((uintptr_t)(addr) & ~(DSM_PAGE_SIZE - 1)))
 
 // ============================================================================
-// 1. å¤„ç†é¡µé¢è¯·æ±‚ (Server/Owner ä¾§)
+// 1. ´¦ÀíÒ³ÃæÇëÇó (Server/Owner ²à)
 // ============================================================================
 void process_page_req(int sock, const dsm_header_t& head, const payload_page_req_t& body) {
     auto& state = DSMState::GetInstance();
     std::lock_guard<std::mutex> lock(state.state_mutex);
 
-    // è®¡ç®—è¯·æ±‚é¡µé¢çš„æœ¬åœ°è™šæ‹Ÿåœ°å€
+    // ¼ÆËãÇëÇóÒ³ÃæµÄ±¾µØĞéÄâµØÖ·
     uintptr_t page_addr_int = (uintptr_t)state.shared_mem_base + (body.page_index * DSM_PAGE_SIZE);
     void* page_ptr = (void*)page_addr_int;
 
-    // 1. æŸ¥è¡¨ç¡®è®¤æ‰€æœ‰æƒ
+    // 1. ²é±íÈ·ÈÏËùÓĞÈ¨
     auto* record = state.page_table.Find(page_addr_int);
     
-    // è·å–å½“å‰ Owner (-1 è¡¨ç¤ºæœªåˆ†é…ï¼Œé»˜è®¤å½’ Node 1/Manager)
+    // »ñÈ¡µ±Ç° Owner (-1 ±íÊ¾Î´·ÖÅä£¬Ä¬ÈÏ¹é Node 1/Manager)
     int current_owner = record ? record->owner_id : -1;
-    // å¦‚æœè®°å½•ä¸å­˜åœ¨ï¼Œä¸”æˆ‘æ˜¯ Manager (Node 1)ï¼Œé‚£é»˜è®¤å°±æ˜¯æˆ‘çš„
+    // Èç¹û¼ÇÂ¼²»´æÔÚ£¬ÇÒÎÒÊÇ Manager (Node 1)£¬ÄÇÄ¬ÈÏ¾ÍÊÇÎÒµÄ
     if (current_owner == -1 && state.my_node_id == 1) {
         current_owner = 1;
     }
 
     // ============================================================
-    // Case A: æˆ‘æ˜¯ Owner (æ•°æ®åœ¨æˆ‘è¿™)
+    // Case A: ÎÒÊÇ Owner (Êı¾İÔÚÎÒÕâ)
     // ============================================================
     if (current_owner == state.my_node_id) {
         std::cout << "[DSM] Serving Page " << body.page_index << " to Node " << head.src_node_id << std::endl;
 
-        // ã€å…³é”®æ­¥éª¤ã€‘OS ä¿æŠ¤å¤„ç†
-        // å¦‚æœå½“å‰é¡µé¢æ˜¯ PROT_NONE (å¯èƒ½å› ä¸ºç»™äº†åˆ«äººé”ï¼Œæˆ–è€…è‡ªå·±ä¹Ÿæ²¡å†™è¿‡)ï¼Œ
-        // è¿™é‡Œå¿…é¡»ä¸´æ—¶å¼€å¯è¯»æƒé™ï¼Œå¦åˆ™ rio_writen è¯»å–å†…å­˜æ—¶ Server ä¼šå´©æºƒã€‚
+        // ¡¾¹Ø¼ü²½Öè¡¿OS ±£»¤´¦Àí
+        // Èç¹ûµ±Ç°Ò³ÃæÊÇ PROT_NONE (¿ÉÄÜÒòÎª¸øÁË±ğÈËËø£¬»òÕß×Ô¼ºÒ²Ã»Ğ´¹ı)£¬
+        // ÕâÀï±ØĞëÁÙÊ±¿ªÆô¶ÁÈ¨ÏŞ£¬·ñÔò rio_writen ¶ÁÈ¡ÄÚ´æÊ± Server »á±ÀÀ£¡£
         mprotect(page_ptr, DSM_PAGE_SIZE, PROT_READ);
 
-        // 1. æ„é€ å¤´éƒ¨ï¼šä½¿ç”¨ PAGE_REPï¼Œæ ‡è®° unused=1 (ä»£è¡¨æ•°æ®)
+        // 1. ¹¹ÔìÍ·²¿£ºÊ¹ÓÃ PAGE_REP£¬±ê¼Ç unused=1 (´ú±íÊı¾İ)
         dsm_header_t rep_head = {0};
         rep_head.type = DSM_MSG_PAGE_REP;
         rep_head.src_node_id = state.my_node_id;
         rep_head.seq_num = head.seq_num;
-        rep_head.payload_len = DSM_PAGE_SIZE; // å›ºå®š 4096
-        rep_head.unused = 1; // <--- 1 è¡¨ç¤ºè´Ÿè½½æ˜¯ Data
+        rep_head.payload_len = DSM_PAGE_SIZE; // ¹Ì¶¨ 4096
+        rep_head.unused = 1; // <--- 1 ±íÊ¾¸ºÔØÊÇ Data
 
-        // 2. å‘é€å¤´éƒ¨
+        // 2. ·¢ËÍÍ·²¿
         rio_writen(sock, &rep_head, sizeof(rep_head));
 
-        // 3. å‘é€æ•°æ® (4KB)
+        // 3. ·¢ËÍÊı¾İ (4KB)
         rio_writen(sock, page_ptr, DSM_PAGE_SIZE);
 
-        // 4. ç§»äº¤æ‰€æœ‰æƒ (æ ¹æ®åè®®ï¼Œå‘é€å³ç§»äº¤)
-        // æ›´æ–°æœ¬åœ°é¡µè¡¨
+        // 4. ÒÆ½»ËùÓĞÈ¨ (¸ù¾İĞ­Òé£¬·¢ËÍ¼´ÒÆ½»)
+        // ¸üĞÂ±¾µØÒ³±í
         if (record) {
             record->owner_id = head.src_node_id;
         } else {
@@ -66,106 +66,42 @@ void process_page_req(int sock, const dsm_header_t& head, const payload_page_req
             state.page_table.Insert(page_addr_int, new_rec);
         }
 
-        // ã€å…³é”®æ­¥éª¤ã€‘è®¾ç½®æœ¬åœ°ä¸å¯è®¿é—®
-        // æ—¢ç„¶æ•°æ®ç»™äº†åˆ«äººï¼Œæˆ‘æœ¬åœ°å°±å¤±æ•ˆäº†(Invalidate)ï¼Œé˜²æ­¢äº§ç”Ÿä¸ä¸€è‡´
+        // ¡¾¹Ø¼ü²½Öè¡¿ÉèÖÃ±¾µØ²»¿É·ÃÎÊ
+        // ¼ÈÈ»Êı¾İ¸øÁË±ğÈË£¬ÎÒ±¾µØ¾ÍÊ§Ğ§ÁË(Invalidate)£¬·ÀÖ¹²úÉú²»Ò»ÖÂ
         mprotect(page_ptr, DSM_PAGE_SIZE, PROT_NONE);
 
         std::cout << "  -> Data sent. Ownership transferred." << std::endl;
     } 
     // ============================================================
-    // Case B: æˆ‘ä¸æ˜¯ Owner -> é‡å®šå‘ (Redirect)
+    // Case B: ÎÒ²»ÊÇ Owner -> ÖØ¶¨Ïò (Redirect)
     // ============================================================
     else {
-        // å¦‚æœæŸ¥ä¸åˆ°è®°å½•ä¸”æˆ‘ä¹Ÿä¸æ˜¯Managerï¼Œé‚£å¤§æ¦‚ç‡åº”è¯¥æ‰¾Managerï¼Œæˆ–è€…Hashè®¡ç®—å‡ºçš„ProbOwner
+        // Èç¹û²é²»µ½¼ÇÂ¼ÇÒÎÒÒ²²»ÊÇManager£¬ÄÇ´ó¸ÅÂÊÓ¦¸ÃÕÒManager£¬»òÕßHash¼ÆËã³öµÄProbOwner
         if (current_owner == -1) current_owner = 1; 
 
         std::cout << "[DSM] Redirect Page " << body.page_index << ": Me(" << state.my_node_id 
                   << ") -> RealOwner(" << current_owner << ")" << std::endl;
 
-        // 1. æ„é€ å¤´éƒ¨ï¼šPAGE_REPï¼Œæ ‡è®° unused=0 (ä»£è¡¨é‡å®šå‘)
+        // 1. ¹¹ÔìÍ·²¿£ºPAGE_REP£¬±ê¼Ç unused=0 (´ú±íÖØ¶¨Ïò)
         dsm_header_t rep_head = {0};
         rep_head.type = DSM_MSG_PAGE_REP; 
         rep_head.src_node_id = state.my_node_id;
         rep_head.seq_num = head.seq_num;
         rep_head.payload_len = sizeof(payload_page_rep_t);
-        rep_head.unused = 0; // <--- 0 è¡¨ç¤ºè´Ÿè½½æ˜¯ Redirect Info
+        rep_head.unused = 0; // <--- 0 ±íÊ¾¸ºÔØÊÇ Redirect Info
 
-        // 2. æ„é€  Body
+        // 2. ¹¹Ôì Body
         payload_page_rep_t rep_body;
         rep_body.page_index = body.page_index;
-        rep_body.requester_id = current_owner; // å¤ç”¨å­—æ®µå­˜ RealOwner ID
+        rep_body.requester_id = current_owner; // ¸´ÓÃ×Ö¶Î´æ RealOwner ID
 
-        // 3. å‘é€
+        // 3. ·¢ËÍ
         rio_writen(sock, &rep_head, sizeof(rep_head));
         rio_writen(sock, &rep_body, sizeof(rep_body));
     }
+    // ============================================================
+    // Case C: 
+    // ============================================================
 }
 
 
-// ============================================================================
-// 2. å¤„ç†é¡µé¢å›å¤ (Client ä¾§ï¼Œç”± Daemon çº¿ç¨‹è°ƒç”¨)
-// ============================================================================
-void process_page_rep(int sock, const dsm_header_t& head, const char* raw_payload) {
-    auto& state = DSMState::GetInstance();
-    
-    // åŠ é”ï¼Œå› ä¸ºè¦ä¿®æ”¹å†…å­˜å’Œ notify
-    std::unique_lock<std::mutex> lock(state.state_mutex);
-
-    // å‡è®¾ï¼šæˆ‘ä»¬åœ¨ DSMState é‡Œå¢åŠ äº†ä¸€ä¸ªå­—æ®µ `pending_page_index` 
-    // ç”¨æ¥è®°å½•å½“å‰çº¿ç¨‹æ­£åœ¨ç­‰å“ªä¸€é¡µ (å› ä¸ºåè®®æŠ¥æ–‡å¤´é‡Œæ²¡å¸¦é¡µå·ï¼Œå¦‚æœæ˜¯DataåŒ…çš„è¯)
-    // å¦‚æœæ²¡æœ‰è¿™ä¸ªå­—æ®µï¼Œæˆ‘ä»¬ä¸çŸ¥é“æ”¶åˆ°çš„ 4KB å¾€å“ªé‡Œå†™ã€‚
-    // è¿™é‡Œå‡å®š payload_page_req_t (Clientå‘èµ·è¯·æ±‚æ—¶) è®¾ç½®äº†è¿™ä¸ªå€¼ã€‚
-    
-    // ä¸ºäº†ä»£ç èƒ½è·‘ï¼Œè¿™é‡Œå‡è®¾ä½ ä¼šåœ¨ dsm_state.hpp é‡ŒåŠ ä¸€ä¸ª `volatile uint32_t pending_page_index;`
-    uint32_t page_idx = state.pending_page_index; 
-    uintptr_t page_addr_int = (uintptr_t)state.shared_mem_base + (page_idx * DSM_PAGE_SIZE);
-    void* page_ptr = (void*)page_addr_int;
-
-    // ============================================================
-    // Case A: æ”¶åˆ°æ•°æ® (unused == 1)
-    // ============================================================
-    if (head.unused == 1) {
-        std::cout << "[Client] Received Page Data for Index " << page_idx << std::endl;
-
-        // 1. å¼€å¯å†™æƒé™ (ä»¥ä¾¿å†™å…¥æ”¶åˆ°çš„æ•°æ®)
-        mprotect(page_ptr, DSM_PAGE_SIZE, PROT_READ | PROT_WRITE);
-
-        // 2. å†™å…¥æ•°æ®
-        memcpy(page_ptr, raw_payload, DSM_PAGE_SIZE);
-
-        // 3. æ›´æ–°é¡µè¡¨ï¼šæˆ‘æ˜¯ Owner äº†
-        PageRecord rec;
-        rec.owner_id = state.my_node_id;
-        if (!state.page_table.Update(page_addr_int, rec)) {
-            state.page_table.Insert(page_addr_int, rec);
-        }
-
-        // 4. è®¾ç½®çŠ¶æ€ï¼šæˆåŠŸ
-        state.page_req_finished = true;  // è¯·æ±‚ç»“æŸ
-        state.data_received = true;      // æ‹¿åˆ°äº†æ•°æ® (ä¸ç”¨é‡è¯•)
-    }
-    // ============================================================
-    // Case B: æ”¶åˆ°é‡å®šå‘ (unused == 0)
-    // ============================================================
-    else {
-        auto* body = (const payload_page_rep_t*)raw_payload;
-        int real_owner = body->requester_id; // è¿™é‡Œå­˜çš„æ˜¯ Owner ID
-
-        std::cout << "[Client] Received Redirect for Index " << page_idx 
-                  << " -> Go to Node " << real_owner << std::endl;
-
-        // 1. æ›´æ–°é¡µè¡¨ï¼šè®°å½•çœŸæ­£çš„ Owner
-        PageRecord rec;
-        rec.owner_id = real_owner;
-        if (!state.page_table.Update(page_addr_int, rec)) {
-            state.page_table.Insert(page_addr_int, rec);
-        }
-
-        // 2. è®¾ç½®çŠ¶æ€ï¼šæœªå®Œæˆ (éœ€è¦ä¸»çº¿ç¨‹é†’æ¥åé‡è¯•)
-        state.page_req_finished = true; // å½“å‰è¿™ä¸€æ¬¡è¯·æ±‚äº¤äº’ç®—ç»“æŸäº†
-        state.data_received = false;    // ä½†æ˜¯æ²¡æ‹¿åˆ°æ•°æ®ï¼Œéœ€è¦ Retry
-    }
-
-    // å”¤é†’ dsm_request_page é‡Œçš„ wait
-    state.page_cond.notify_all();
-}

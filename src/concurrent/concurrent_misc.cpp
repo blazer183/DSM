@@ -3,46 +3,46 @@
 #include <cstring>
 #include <unistd.h>
 
-// å¼•å…¥å¤´æ–‡ä»¶
+// ÒıÈëÍ·ÎÄ¼ş
 #include "concurrent/concurrent_core.h"
 #include "net/protocol.h"
 
-// æ ‡å¿—ä½çº¦å®š (å¯¹åº” dsm_header_t.unused)
+// ±êÖ¾Î»Ô¼¶¨ (¶ÔÓ¦ dsm_header_t.unused)
 #define FLAG_UPDATE_PAGE 0x00
 #define FLAG_UPDATE_LOCK 0x01
 
 // ============================================================================
-// 1. å¤„ç†æ‰€æœ‰æƒæ›´æ–° (Manager ä¾§)
-// é€»è¾‘ï¼šæ”¶åˆ° Worker çš„é€šçŸ¥ï¼Œæ›´æ–° Directory (é¡µè¡¨/é”è¡¨) ä¸­çš„ Owner å­—æ®µ
+// 1. ´¦ÀíËùÓĞÈ¨¸üĞÂ (Manager ²à)
+// Âß¼­£ºÊÕµ½ Worker µÄÍ¨Öª£¬¸üĞÂ Directory (Ò³±í/Ëø±í) ÖĞµÄ Owner ×Ö¶Î
 // ============================================================================
 void process_owner_update(int sock, const dsm_header_t& head, const payload_owner_update_t& body) {
     auto& state = DSMState::GetInstance();
     std::lock_guard<std::mutex> lock(state.state_mutex);
 
-    // åªæœ‰ Manager ç»´æŠ¤å…¨å±€ç›®å½•ï¼Œé€šå¸¸åªæœ‰ Manager ä¼šæ”¶åˆ°è¿™ä¸ªæ¶ˆæ¯
-    // ä½†ä¸ºäº†å¥å£®æ€§ï¼Œæˆ‘ä»¬å¯ä»¥å¤„ç†æ‰€æœ‰èŠ‚ç‚¹çš„æ›´æ–°ï¼ˆå¦‚æœåšå¤‡ä»½çš„è¯ï¼‰
+    // Ö»ÓĞ Manager Î¬»¤È«¾ÖÄ¿Â¼£¬Í¨³£Ö»ÓĞ Manager »áÊÕµ½Õâ¸öÏûÏ¢
+    // µ«ÎªÁË½¡×³ĞÔ£¬ÎÒÃÇ¿ÉÒÔ´¦ÀíËùÓĞ½ÚµãµÄ¸üĞÂ£¨Èç¹û×ö±¸·İµÄ»°£©
 
     uint32_t res_id = body.resource_id;
     int new_owner = body.new_owner_id;
 
-    // æ ¹æ®å¤´éƒ¨ unused å­—æ®µåˆ¤æ–­æ˜¯ é¡µ è¿˜æ˜¯ é”
-    // çº¦å®šï¼š0 = Page, 1 = Lock
+    // ¸ù¾İÍ·²¿ unused ×Ö¶ÎÅĞ¶ÏÊÇ Ò³ »¹ÊÇ Ëø
+    // Ô¼¶¨£º0 = Page, 1 = Lock
     if (head.unused == FLAG_UPDATE_LOCK) {
-        // --- æ›´æ–°é”è¡¨ ---
-        LockRecord rec(new_owner); // ä½¿ç”¨æ„é€ å‡½æ•°åˆå§‹åŒ– owner
-        // è¿™é‡Œä¸ç¡®å®šæ˜¯å¦ lockedï¼Œé€šå¸¸ update å‘è¿‡æ¥æ„å‘³ç€æœ‰äººæŒæœ‰äº†
+        // --- ¸üĞÂËø±í ---
+        LockRecord rec(new_owner); // Ê¹ÓÃ¹¹Ôìº¯Êı³õÊ¼»¯ owner
+        // ÕâÀï²»È·¶¨ÊÇ·ñ locked£¬Í¨³£ update ·¢¹ıÀ´ÒâÎ¶×ÅÓĞÈË³ÖÓĞÁË
         rec.locked = true; 
 
-        // å°è¯•æ›´æ–°ï¼Œå¦‚æœä¸å­˜åœ¨åˆ™æ’å…¥
+        // ³¢ÊÔ¸üĞÂ£¬Èç¹û²»´æÔÚÔò²åÈë
         if (!state.lock_table.Update(res_id, rec)) {
             state.lock_table.Insert(res_id, rec);
         }
         std::cout << "[Directory] Lock " << res_id << " moved to Node " << new_owner << std::endl;
 
     } else {
-        // --- æ›´æ–°é¡µè¡¨ ---
-        // æ³¨æ„ï¼šé¡µè¡¨çš„ Key æ˜¯è™šæ‹Ÿåœ°å€ï¼Œä¸æ˜¯ page_index
-        // æˆ‘ä»¬éœ€è¦æŠŠ page_index è½¬å›åœ°å€
+        // --- ¸üĞÂÒ³±í ---
+        // ×¢Òâ£ºÒ³±íµÄ Key ÊÇĞéÄâµØÖ·£¬²»ÊÇ page_index
+        // ÎÒÃÇĞèÒª°Ñ page_index ×ª»ØµØÖ·
         uintptr_t page_addr = (uintptr_t)state.shared_mem_base + (res_id * DSM_PAGE_SIZE);
 
         PageRecord rec;
@@ -55,26 +55,3 @@ void process_owner_update(int sock, const dsm_header_t& head, const payload_owne
     }
 }
 
-// ============================================================================
-// 2. å¤„ç†é€šç”¨ç¡®è®¤ (é€šç”¨)
-// é€»è¾‘ï¼šå¤„ç† ACK æŠ¥æ–‡ï¼Œé€šå¸¸ç”¨äº Barrier åŒæ­¥
-// ============================================================================
-void process_ack(int sock, const dsm_header_t& head, const payload_ack_t& body) {
-    // ACK é€šå¸¸æ¯”è¾ƒç®€å•ï¼Œä¸éœ€è¦åŠ å…¨å±€å¤§é”ï¼Œé™¤éæ¶‰åŠæ¡ä»¶å˜é‡
-    // è¿™é‡Œæˆ‘ä»¬å‡è®¾å®ƒç”¨äº Barrier åŒæ­¥
-    
-    std::cout << "[DSM] Received ACK from Node " << head.src_node_id 
-              << " (Seq: " << body.target_seq << ", Status: " << (int)body.status << ")" << std::endl;
-
-    // TODO: å¦‚æœä½ ä»¬åç»­å®ç°äº† dsm_barrier()ï¼Œè¿™é‡Œéœ€è¦æ ¹æ® seq_num å”¤é†’ barrier_cond
-    /*
-    auto& state = DSMState::GetInstance();
-    std::unique_lock<std::mutex> lock(state.state_mutex);
-    if (body.target_seq == CURRENT_BARRIER_SEQ) {
-        state.barrier_counter++;
-        if (state.barrier_counter >= state.node_count) {
-             state.barrier_cond.notify_all();
-        }
-    }
-    */
-}

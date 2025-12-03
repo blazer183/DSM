@@ -59,36 +59,3 @@ void process_join_req(int sock, const dsm_header_t& head, const payload_join_req
     rio_writen(sock, &ack_body, sizeof(ack_body));
 }
 
-/**
- * [Client端运行] 处理 Manager 的加入确认
- * 逻辑：
- * 1. 接收分配的 ID
- * 2. 更新本地状态 (内存大小、节点总数)
- * 3. 唤醒正在阻塞等待的初始化线程 (concurrent_system_init)
- */
-void process_join_ack(int sock, const dsm_header_t& head, const payload_join_ack_t& body) {
-    auto& state = DSMState::GetInstance();
-    
-    // 加锁，因为我们即将修改全局状态，并且操作条件变量
-    std::unique_lock<std::mutex> lock(state.state_mutex);
-
-    std::cout << "[Client] Received JOIN_ACK from Manager (ID " << head.src_node_id << ")" << std::endl;
-
-    // 1. 更新身份信息
-    state.my_node_id = body.assigned_node_id;
-    state.node_count = body.node_count;       // 重要：用于后续 Hash 路由计算
-    state.total_mem_size = body.dsm_mem_size; // 记录共享内存大小
-
-    std::cout << "  -> My Assigned ID: " << state.my_node_id << std::endl;
-    std::cout << "  -> Cluster Size: " << state.node_count << std::endl;
-    std::cout << "  -> Shared Mem Size: " << state.total_mem_size << " bytes" << std::endl;
-
-    // 2. 设置标志位
-    state.join_finished = true;
-
-    // 3. 唤醒主线程
-    // 对应 dsm_state.hpp 中的 std::condition_variable join_cond;
-    state.join_cond.notify_all();
-    
-    // lock 自动释放
-}

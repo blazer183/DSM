@@ -20,8 +20,8 @@
 #include "os/bind_table.h"
 #include "os/lock_table.h"
 #include "os/page_table.h"
+#include "os/socket_table.h"
 #include "os/pfhandler.h"
-
 
 #ifdef UNITEST
 #define STATIC 
@@ -29,13 +29,12 @@
 #define STATIC static
 #endif
 
-
 extern void dsm_start_daemon(int port);
-
 
 struct PageTable *PageTable = nullptr;
 struct LockTable *LockTable = nullptr;
 struct BindTable *BindTable = nullptr;
+struct SocketTable *SocketTable = nullptr;
 
 size_t SharedPages = 0;
 int NodeId = -1;
@@ -47,8 +46,8 @@ std::vector<std::string> WorkerNodeIps;  // 使用vector存储IP列表
 STATIC std::string LeaderNodeIp;
 STATIC int LeaderNodePort = 0;
 STATIC int LeaderNodeSocket = -1;
-constexpr int kDefaultListenPort = 9999;
-
+STATIC int LockNum = 0;
+STATIC void * SharedAddrCurrentLoc = nullptr;   //当前共享区分配位置
 
 
 std::string GetPodIp(int pod_id) {
@@ -70,7 +69,7 @@ int GetPodPort(int pod_id) {
     if (pod_id == 0) {
         return LeaderNodePort;
     } else if (pod_id > 0) {
-        return kDefaultListenPort + pod_id;
+        return LeaderNodePort + pod_id;
     }
     std::cerr << "[DSM Warning] Invalid PodID " << pod_id << std::endl;
     return -1;
@@ -106,6 +105,7 @@ bool LaunchListenerThread(int Port)
             dsm_start_daemon(Port);
         });
         listener.detach();
+        sleep(1);
         return true;
     } catch (const std::system_error &err) {
         std::cerr << "[dsm] failed to launch listener thread: " << err.what() << std::endl;
@@ -115,20 +115,16 @@ bool LaunchListenerThread(int Port)
 
 bool FetchGlobalData(int dsm_memsize)    
 {
-    // 统一从环境变量获取所有配置参数
+    SharedPages = static_cast<size_t>(dsm_memsize) / PAGESIZE;
+    SharedAddrBase = reinterpret_cast<void *>(0x4000000000ULL); 
+    SharedAddrCurrentLoc = SharedAddrBase;
     if (!GetEnvVar("DSM_LEADER_IP", LeaderNodeIp, std::string(""), true)) exit(1);
     if (!GetEnvVar("DSM_LEADER_PORT", LeaderNodePort, 0, true)) exit(1);
     if (!GetEnvVar("DSM_TOTAL_PROCESSES", ProcNum, 1, false)) exit(1);
     if (!GetEnvVar("DSM_NODE_ID", NodeId, -1, false)) exit(1);
-
-    
-    // 获取Worker拓扑信息 (用于地址映射算法)
     if (!GetEnvVar("DSM_WORKER_COUNT", WorkerNodeNum, 0, false)) exit(1);
     std::string worker_ips_str;
     if (!GetEnvVar("DSM_WORKER_IPS", worker_ips_str, std::string(""), false)) exit(1);
-
-    
-    // 解析逗号分隔的IP列表到vector
     WorkerNodeIps.clear();
     if (!worker_ips_str.empty()) {
         std::stringstream ss(worker_ips_str);
@@ -138,30 +134,12 @@ bool FetchGlobalData(int dsm_memsize)
         }
         std::cout << "[DSM Info] Parsed " << WorkerNodeIps.size() << " worker IPs" << std::endl;
     }
-
-
-    //初始化全局变量
-    SharedPages = static_cast<size_t>(dsm_memsize) / PAGESIZE;
-    SharedAddrBase = reinterpret_cast<void *>(0x4000000000ULL);  
-
-
-    // 判断当前进程是否为Leader (NodeId == 0)
-    if (NodeId == 0) {
-        LeaderNodeSocket = -1;
-        std::cout << "[DSM Info] I am Leader (PodID=0), starting listener on port " << LeaderNodePort << std::endl;
-        return LaunchListenerThread(LeaderNodePort);
-    }
-
-
     const bool ok = (NodeId >= 0) && (SharedAddrBase != nullptr) && (SharedPages > 0);
     if (!ok) {
         std::cerr << "[dsm] invalid shared region parameters (PodID=" << NodeId
                   << ", base=" << SharedAddrBase << ", pages=" << SharedPages << ")" << std::endl;
         return false;
     }
-    
-    std::cout << "[DSM Info] I am Worker (PodID=" << NodeId << "), cluster ready, starting listener on port " << (kDefaultListenPort+NodeId) << std::endl;
-    return LaunchListenerThread(kDefaultListenPort+NodeId);
 }
 
 bool InitDataStructs(int dsm_memsize)
@@ -169,7 +147,6 @@ bool InitDataStructs(int dsm_memsize)
     // 分配共享内存区域
     if (SharedAddrBase != nullptr && SharedPages != 0){
         const size_t total_size = (size_t)dsm_memsize;
-        
         void* mapped_addr = ::mmap(
             SharedAddrBase,                    // 固定起始地址
             total_size,                        // 分配大小
@@ -191,7 +168,6 @@ bool InitDataStructs(int dsm_memsize)
     }
 
 
-
     // 初始化页表、锁表、Bind表
     if (PageTable == nullptr)
         PageTable = new (::std::nothrow) class PageTable();
@@ -199,23 +175,20 @@ bool InitDataStructs(int dsm_memsize)
         LockTable = new (::std::nothrow) class LockTable();
     if (BindTable == nullptr)
         BindTable = new (::std::nothrow) class BindTable();
-    const bool ok = (PageTable != nullptr) && (LockTable != nullptr) && (BindTable != nullptr);
+    if (SocketTable == nullptr)
+        SocketTable = new (::std::nothrow) class SocketTable();
+    const bool ok = (PageTable != nullptr) && (LockTable != nullptr)
+                    && (BindTable != nullptr) && (SocketTable != nullptr);
     if (!ok){
         std::cerr << "[dsm] failed to allocate metadata tables" << std::endl;
         return false;
     }
-
     return true;
 }
 
-bool barrier()
+bool dsm_barrier()
 {
-    // Leader 本身也是计算进程，需要参与 barrier 同步
-    // 如果是 Leader，使用本地地址（127.0.0.1），然后走同一套通信逻辑
     std::string target_ip = LeaderNodeIp;
-    if (NodeId == 0) {
-        target_ip = "127.0.0.1";  // Leader 给自己发消息
-    }
 
     // 检查是否已有长连接，有则复用，无则建立
     int leader_sock = LeaderNodeSocket;
@@ -233,18 +206,15 @@ bool barrier()
         LeaderNodeSocket = leader_sock;  // 保存连接以便后续复用
     }
 
-    // 发送0x01报文: 告知Leader我已就绪，监听端口为9999+NodeId
-    payload_join_req_t body = {htons(kDefaultListenPort + NodeId)}; 
+    
     dsm_header_t req = {
         DSM_MSG_JOIN_REQ,                    
         0,                       // unused
         htons(NodeId),           // src_node_id: 使用预分配的ID 
         htonl(1),                // seq_num: 1 
-        htonl(sizeof(body))      // payload length
+        0                       // payload length
     };
-
     ::send(leader_sock, &req, sizeof(req), 0);
-    ::send(leader_sock, &body, sizeof(body), 0);
 
     // 等待Leader确认所有进程就绪后的回复
     rio_t rio;
@@ -252,25 +222,120 @@ bool barrier()
     
     dsm_header_t ack_header;
     rio_readn(&rio, &ack_header, sizeof(ack_header));
-    // Leader回复无payload，只要收到ACK就表示集群已就绪
-
+    
     return true;
 }
-
 
 int dsm_init(int dsm_memsize)       //argc argv用于传递
 {
     if (!FetchGlobalData(dsm_memsize))
         return -1;
-    sleep(1); //确保监听线程启动
-    if (!InitDataStructs(dsm_memsize))
+    if(!LaunchListenerThread(LeaderNodePort+NodeId))
         return -2;
-    if(!barrier())
+    if (!InitDataStructs(dsm_memsize))
         return -3;
+    if(!dsm_barrier())
+        return -4;
     return 0;
 }
 
-
 int dsm_getnodeid(void){
     return NodeId;
+}
+
+int dsm_finalize(void);
+
+int dsm_mutex_init(){
+    if (LockTable == nullptr)
+        return -1;
+
+    LockTable->LockAcquire();
+    LockTable->Insert(++LockNum, LockRecord());
+    LockTable->LockRelease();
+    return 0;
+}
+
+int dsm_mutex_destroy(int *mutex){
+    if (LockTable == nullptr || mutex == nullptr)
+        return -1;
+
+    LockTable->LockAcquire();
+    LockTable->Remove(*mutex);
+    LockTable->LockRelease();
+    return 0;
+}
+
+int dsm_mutex_lock(int *mutex){
+    if (mutex == nullptr || SocketTable == nullptr)
+        return -1;
+
+    const int lockid = *mutex;
+    const int lockprobowner = lockid % ProcNum;
+
+    bool has_connection = false;
+    SocketTable->LockAcquire();
+    has_connection = (SocketTable->Find(lockprobowner) != nullptr);
+    SocketTable->LockRelease();
+
+    if (!has_connection) {
+        //建立连接
+        std::string lockprobownerIP = GetPodIp(lockprobowner);
+        int lockprotownerPort = GetPodPort(lockprobowner);
+        int sock = ::socket(AF_INET, SOCK_STREAM, 0);
+        if (sock < 0) return -1;
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(lockprotownerPort);
+        if (::inet_pton(AF_INET, lockprobownerIP.c_str(), &addr.sin_addr) <= 0) {
+            ::close(sock);
+            return -1;
+        }
+        if (::connect(sock, (sockaddr*)&addr, sizeof(addr)) < 0) {
+            ::close(sock);
+            return -1;
+        }
+        SocketTable->LockAcquire();
+        SocketTable->Insert(lockprobowner, SocketRecord{sock});
+        SocketTable->LockRelease();
+    }
+    //请求锁
+    //查看保留位，是否是锁批准
+    //如果不是，将新获得ID发送锁申请
+    //获得锁，同时向probowner发送锁拥有者更新消息
+    //等待ACK，这一轮完成
+}
+
+int dsm_mutex_unlock(int *mutex){
+    if (LockTable == nullptr || mutex == nullptr)
+        return -1;
+
+    LockTable->LockAcquire();
+    auto record = LockTable->Find(*mutex);
+    if(record == nullptr){
+        LockTable->LockRelease();
+        std::cerr << "[dsm_mutex_unlock] Invalid mutex ID: " << *mutex << std::endl;
+        return -1; // 锁不存在 
+    }
+    record->locked = false;
+    LockTable->Update(*mutex, *record);
+    LockTable->LockRelease();
+    return 0;
+}
+
+void dsm_bind(void *addr, const char *name){
+    if (BindTable == nullptr || addr == nullptr || name == nullptr)
+        return;
+
+    BindTable->LockAcquire();
+    BindTable->Insert(addr, BindRecord{addr, std::string(name)});
+    BindTable->LockRelease();
+}
+
+void *dsm_malloc(size_t size){
+    if(SharedAddrCurrentLoc + size > SharedAddrBase + SharedPages * PageSize){
+        std::cerr << "[dsm_malloc] Out of shared memory!" << std::endl;
+        return nullptr;
+    }
+    SharedAddrCurrentLoc += size;
+    return SharedAddrCurrentLoc - size;
 }

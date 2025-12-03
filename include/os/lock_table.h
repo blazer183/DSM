@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 
 #include "os/table_base.hpp"
 
@@ -16,39 +17,21 @@ struct LockRecord {
 
 class LockTable final : public TableBase<int, LockRecord> {
 public:
-    LockTable() = default;
+    using Base = TableBase<int, LockRecord>;
 
-    using TableBase::Clear;
-    using TableBase::Find;
-    using TableBase::Insert;
-    using TableBase::Remove;
-    using TableBase::Size;
-    using TableBase::Update;
-
-    /* Acquire lock_id on behalf of requester (re-entrant). */
-    bool TryAcquire(int lock_id, int requester)
+    explicit LockTable(std::size_t capacity = 0)
+        : Base(capacity == 0 ? std::numeric_limits<std::size_t>::max() : capacity)
     {
-        auto *record = Find(lock_id);
-        if (record == nullptr) {
-            return Insert(lock_id, LockRecord(requester));
-        }
-        if (!record->locked || record->owner_id == requester) {
-            record->owner_id = requester;
-            record->locked = true;
-            return true;
-        }
-        return false;
     }
 
-    /* Release lock_id if requester currently owns it. */
-    bool Release(int lock_id, int requester)
-    {
-        auto *record = Find(lock_id);
-        if (record == nullptr || record->owner_id != requester)
-            return false;
-        record->locked = false;
-        return true;
-    }
+    using Base::Clear;
+    using Base::Find;
+    using Base::Insert;
+    using Base::Remove;
+    using Base::Size;
+    using Base::Update;
+    using Base::LockAcquire;
+    using Base::LockRelease;
 };
 
 

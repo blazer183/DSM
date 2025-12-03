@@ -2,13 +2,13 @@
 #include <mutex>
 #include <cstring>
 #include <unistd.h>
-// å¼•å…¥å¤´æ–‡ä»¶
+// ÒıÈëÍ·ÎÄ¼ş
 #include "concurrent/concurrent_core.h"
 #include "net/protocol.h"
 
 // ============================================================================
-// 1. å¤„ç†é”è¯·æ±‚ (Server ä¾§)
-// é€»è¾‘ï¼šæ”¶åˆ° ACQ -> æŸ¥è¡¨ -> æ˜¯æˆ‘çš„å°±ç»™(Grant) -> ä¸æ˜¯æˆ‘çš„å°±é‡å®šå‘(Redirect)
+// 1. ´¦ÀíËøÇëÇó (Server ²à)
+// Âß¼­£ºÊÕµ½ ACQ -> ²é±í -> ÊÇÎÒµÄ¾Í¸ø(Grant) -> ²»ÊÇÎÒµÄ¾ÍÖØ¶¨Ïò(Redirect)
 // ============================================================================
 void process_lock_acq(int sock, const dsm_header_t& head, const payload_lock_req_t& body) {
     auto& state = DSMState::GetInstance();
@@ -17,133 +17,84 @@ void process_lock_acq(int sock, const dsm_header_t& head, const payload_lock_req
     int lock_id = body.lock_id;
     int requester = head.src_node_id;
 
-    // 1. æŸ¥è¡¨çœ‹é”ç°åœ¨çš„çŠ¶æ€
+    // 1. ²é±í¿´ËøÏÖÔÚµÄ×´Ì¬
     auto* record = state.lock_table.Find(lock_id);
     
-    // è·å–å½“å‰ Owner 
-    // -1 è¡¨ç¤ºæœªåˆ†é…ï¼Œé»˜è®¤å½’ Node 1 (Manager)
-    // å¦‚æœæˆ‘æ˜¯ Manager ä¸”è®°å½•ä¸å­˜åœ¨ï¼Œé‚£é»˜è®¤æˆ‘æ˜¯ Owner
+    // »ñÈ¡µ±Ç° Owner 
+    // -1 ±íÊ¾Î´·ÖÅä£¬Ä¬ÈÏ¹é Node 1 (Manager)
+    // Èç¹ûÎÒÊÇ Manager ÇÒ¼ÇÂ¼²»´æÔÚ£¬ÄÇÄ¬ÈÏÎÒÊÇ Owner
     int current_owner = record ? record->owner_id : -1;
     if (current_owner == -1 && state.my_node_id == 1) {
         current_owner = 1;
     }
 
     // ============================================================
-    // Case A: æˆ‘æ˜¯ Owner (é”çš„Tokenåœ¨æˆ‘è¿™)
+    // Case A: ÎÒÊÇ Owner (ËøµÄTokenÔÚÎÒÕâ)
     // ============================================================
     if (current_owner == state.my_node_id) {
-        // ã€æ³¨æ„ã€‘è¿™é‡Œç®€åŒ–äº†é€»è¾‘ï¼šå‡è®¾æ”¶åˆ°è¯·æ±‚å°±ç›´æ¥ç»™ã€‚
-        // å®é™…çš„ DSM ä¸­ï¼Œå¦‚æœæœ¬åœ°æ­£åœ¨ä½¿ç”¨è¿™æŠŠé”(locked=true)ï¼Œåº”è¯¥åŠ å…¥ç­‰å¾…é˜Ÿåˆ—(WaitQueue)ã€‚
-        // ä½†ä¸ºäº†é…åˆä½ çš„"ä¸‰è·³åè®®"é€»è¾‘ï¼Œè¿™é‡Œæˆ‘ä»¬å…ˆå®ç°"ç§»äº¤æ‰€æœ‰æƒ"ã€‚
+        // ¡¾×¢Òâ¡¿ÕâÀï¼ò»¯ÁËÂß¼­£º¼ÙÉèÊÕµ½ÇëÇó¾ÍÖ±½Ó¸ø¡£
+        // Êµ¼ÊµÄ DSM ÖĞ£¬Èç¹û±¾µØÕıÔÚÊ¹ÓÃÕâ°ÑËø(locked=true)£¬Ó¦¸Ã¼ÓÈëµÈ´ı¶ÓÁĞ(WaitQueue)¡£
+        // µ«ÎªÁËÅäºÏÄãµÄ"ÈıÌøĞ­Òé"Âß¼­£¬ÕâÀïÎÒÃÇÏÈÊµÏÖ"ÒÆ½»ËùÓĞÈ¨"¡£
         
         std::cout << "[DSM] Granting Lock " << lock_id << " to Node " << requester << std::endl;
 
-        // 1. æ„é€ å›å¤ï¼šunused=1 (Success/Grant)
+        // 1. ¹¹Ôì»Ø¸´£ºunused=1 (Success/Grant)
         dsm_header_t rep_head = {0};
         rep_head.type = DSM_MSG_LOCK_REP;
         rep_head.src_node_id = state.my_node_id;
         rep_head.seq_num = head.seq_num;
         rep_head.payload_len = sizeof(payload_lock_rep_t);
-        rep_head.unused = 1; // <--- 1 è¡¨ç¤ºæˆæƒæˆåŠŸ
+        rep_head.unused = 1; // <--- 1 ±íÊ¾ÊÚÈ¨³É¹¦
 
-        // 2. æ„é€  Payload
+        // 2. ¹¹Ôì Payload
         payload_lock_rep_t rep_body;
         rep_body.lock_id = lock_id;
-        rep_body.realowner = requester; // ç¡®è®¤ä½ æ˜¯æ–°ä¸»äºº
-        rep_body.invalid_set_count = 0; // Scope Consistency æš‚æ—¶ç•™ç©º
+        rep_body.realowner = requester; // È·ÈÏÄãÊÇĞÂÖ÷ÈË
+        rep_body.invalid_set_count = 0; // Scope Consistency ÔİÊ±Áô¿Õ
 
-        // 3. å‘é€
+        // 3. ·¢ËÍ
         rio_writen(sock, &rep_head, sizeof(rep_head));
         rio_writen(sock, &rep_body, sizeof(rep_body));
 
-        // 4. æ›´æ–°æœ¬åœ°è¡¨ï¼šç§»äº¤æ‰€æœ‰æƒ
-        // æˆ‘ä¸å†æ‹¥æœ‰è¿™æŠŠé”ï¼Œæ–°ä¸»äººæ˜¯ requester
+        // 4. ¸üĞÂ±¾µØ±í£ºÒÆ½»ËùÓĞÈ¨
+        // ÎÒ²»ÔÙÓµÓĞÕâ°ÑËø£¬ĞÂÖ÷ÈËÊÇ requester
         if (record) {
             record->owner_id = requester;
-            record->locked = false; // æ—¢ç„¶ç»™å‡ºå»äº†ï¼Œæˆ‘æœ¬åœ°è‚¯å®šæ²¡é”ä½äº†
+            record->locked = false; // ¼ÈÈ»¸ø³öÈ¥ÁË£¬ÎÒ±¾µØ¿Ï¶¨Ã»Ëø×¡ÁË
         } else {
-            // å¦‚æœè¡¨é‡Œæ²¡è®°å½•ï¼Œæ’å…¥ä¸€æ¡ï¼Œè®°å½•æ–°ä¸»äºº
+            // Èç¹û±íÀïÃ»¼ÇÂ¼£¬²åÈëÒ»Ìõ£¬¼ÇÂ¼ĞÂÖ÷ÈË
             state.lock_table.Insert(lock_id, LockRecord(requester));
         }
         std::cout << "  -> Lock Ownership transferred." << std::endl;
     }
     // ============================================================
-    // Case B: æˆ‘ä¸æ˜¯ Owner -> é‡å®šå‘ (Redirect)
+    // Case B: ÎÒ²»ÊÇ Owner -> ÖØ¶¨Ïò (Redirect)
     // ============================================================
     else {
-        // å¦‚æœæŸ¥ä¸åˆ°ä¸”æˆ‘ä¸æ˜¯Managerï¼Œé»˜è®¤å»æ‰¾Manager (ProbOwnerçš„åå¤‡)
+        // Èç¹û²é²»µ½ÇÒÎÒ²»ÊÇManager£¬Ä¬ÈÏÈ¥ÕÒManager (ProbOwnerµÄºó±¸)
         if (current_owner == -1) current_owner = 1;
 
         std::cout << "[DSM] Redirect Lock " << lock_id << ": Me(" << state.my_node_id 
                   << ") -> RealOwner(" << current_owner << ")" << std::endl;
 
-        // 1. æ„é€ å›å¤ï¼šunused=0 (Redirect)
+        // 1. ¹¹Ôì»Ø¸´£ºunused=0 (Redirect)
         dsm_header_t rep_head = {0};
         rep_head.type = DSM_MSG_LOCK_REP;
         rep_head.src_node_id = state.my_node_id;
         rep_head.seq_num = head.seq_num;
         rep_head.payload_len = sizeof(payload_lock_rep_t);
-        rep_head.unused = 0; // <--- 0 è¡¨ç¤ºé‡å®šå‘
+        rep_head.unused = 0; // <--- 0 ±íÊ¾ÖØ¶¨Ïò
 
-        // 2. æ„é€  Payload (å‘Šè¯‰Clientè°æ‰æ˜¯çœŸOwner)
+        // 2. ¹¹Ôì Payload (¸æËßClientË­²ÅÊÇÕæOwner)
         payload_lock_rep_t rep_body;
         rep_body.lock_id = lock_id;
-        rep_body.realowner = current_owner; // æŠŠçœŸOwner IDå‘å›å»
+        rep_body.realowner = current_owner; // °ÑÕæOwner ID·¢»ØÈ¥
         rep_body.invalid_set_count = 0;
 
-        // 3. å‘é€
+        // 3. ·¢ËÍ
         rio_writen(sock, &rep_head, sizeof(rep_head));
         rio_writen(sock, &rep_body, sizeof(rep_body));
     }
 }
 
 
-// ============================================================================
-// 2. å¤„ç†é”å›å¤ (Client ä¾§ï¼Œç”± Daemon çº¿ç¨‹è°ƒç”¨)
-// ============================================================================
-void process_lock_rep(int sock, const dsm_header_t& head, const payload_lock_rep_t& body) {
-    auto& state = DSMState::GetInstance();
-    std::unique_lock<std::mutex> lock(state.state_mutex);
-
-    int lock_id = body.lock_id;
-
-    // ============================================================
-    // Case A: è·å¾—é” (unused == 1)
-    // ============================================================
-    if (head.unused == 1) {
-        std::cout << "[Client] Lock " << lock_id << " Acquired!" << std::endl;
-
-        // 1. æ›´æ–°æœ¬åœ°è¡¨ï¼šæˆ‘ç°åœ¨æ˜¯ Owner ä¸” locked=true
-        LockRecord rec;
-        rec.owner_id = state.my_node_id;
-        rec.locked = true; // æˆ‘æ‹¿åˆ°äº†ï¼Œå½“ç„¶æ˜¯é”ä½çŠ¶æ€
-        
-        if (!state.lock_table.Update(lock_id, rec)) {
-            state.lock_table.Insert(lock_id, rec);
-        }
-
-        // 2. è®¾ç½®çŠ¶æ€
-        state.lock_granted = true; // æ‹¿åˆ°é”äº†
-    }
-    // ============================================================
-    // Case B: é‡å®šå‘ (unused == 0)
-    // ============================================================
-    else {
-        int real_owner = body.realowner;
-        std::cout << "[Client] Lock " << lock_id << " Redirect -> Node " << real_owner << std::endl;
-
-        // 1. æ›´æ–°æœ¬åœ°è¡¨ï¼šè®°å½• Real Ownerï¼Œæ–¹ä¾¿ä¸‹æ¬¡ç›´æ¥æ‰¾ä»–
-        LockRecord rec;
-        rec.owner_id = real_owner;
-        // æ³¨æ„ï¼šè¿™é‡Œ locked çŠ¶æ€æœªçŸ¥ï¼Œä½† owner ç¡®å®æ˜¯ä»–
-        if (!state.lock_table.Update(lock_id, rec)) {
-            state.lock_table.Insert(lock_id, rec);
-        }
-
-        // 2. è®¾ç½®çŠ¶æ€
-        state.lock_granted = false; // æ²¡æ‹¿åˆ°ï¼Œéœ€è¦ Retry
-    }
-
-    // å”¤é†’ dsm_request_lock é‡Œçš„ wait
-    state.lock_cond.notify_all();
-}

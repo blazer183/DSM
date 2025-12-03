@@ -33,7 +33,7 @@ int main()
 	// ---- Bind table demo -------------------------------------------------
 	BindTable bind_table;
 	char region;
-	auto key = reinterpret_cast<std::uintptr_t>(&region);
+	void *key = &region;
 	bind_table.Insert(key, BindRecord(&region, "segment.bin"));
 	if (auto *bind = bind_table.Find(key)) {
 		std::cout << "Binding for addr=" << bind->base << " file=" << bind->file << std::endl;
