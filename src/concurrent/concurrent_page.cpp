@@ -1,63 +1,62 @@
 #include <iostream>
 #include <mutex>
 #include <cstring>
-#include <sys/mman.h> // 必须包含，用于 mprotect
+#include <sys/mman.h> // ������������� mprotect
+#include <sys/types.h>
+#include <sys/socket.h>
 #include <unistd.h>
 
 #include "concurrent/concurrent_core.h"
 #include "net/protocol.h"
-
-// 辅助宏：页对齐
+#include "dsm.h"
+#include "os/table_base.hpp"
+// �����꣺ҳ����
 #define PAGE_ALIGN_DOWN(addr) ((void*)((uintptr_t)(addr) & ~(DSM_PAGE_SIZE - 1)))
 
-// ============================================================================
-// 1. 处理页面请求 (Server/Owner 侧)
-// ============================================================================
 void process_page_req(int sock, const dsm_header_t& head, const payload_page_req_t& body) {
-    auto& state = DSMState::GetInstance();
-    std::lock_guard<std::mutex> lock(state.state_mutex);
+    ::PageTable->LockAcquire();
 
-    // 计算请求页面的本地虚拟地址
+    // ��������ҳ��ı��������ַ
     uintptr_t page_addr_int = (uintptr_t)state.shared_mem_base + (body.page_index * DSM_PAGE_SIZE);
     void* page_ptr = (void*)page_addr_int;
 
-    // 1. 查表确认所有权
-    auto* record = state.page_table.Find(page_addr_int);
+    // 1. ���ȷ������Ȩ
+    auto* record = ::PageTable->Find(page_addr_int);
     
-    // 获取当前 Owner (-1 表示未分配，默认归 Node 1/Manager)
+    // ��ȡ��ǰ Owner (-1 ��ʾδ���䣬Ĭ�Ϲ� Node 0)
     int current_owner = record ? record->owner_id : -1;
-    // 如果记录不存在，且我是 Manager (Node 1)，那默认就是我的
-    if (current_owner == -1 && state.my_node_id == 1) {
-        current_owner = 1;
+    // �����¼�����ڣ������� Manager (Node 0)����Ĭ�Ͼ����ҵ�
+    if (current_owner == -1 && dsm_getnodeid() == 0) {
+        current_owner = 0;
     }
 
     // ============================================================
-    // Case A: 我是 Owner (数据在我这)
+    // Case A: ���� Owner (����������)
     // ============================================================
     if (current_owner == state.my_node_id) {
         std::cout << "[DSM] Serving Page " << body.page_index << " to Node " << head.src_node_id << std::endl;
 
-        // 【关键步骤】OS 保护处理
-        // 如果当前页面是 PROT_NONE (可能因为给了别人锁，或者自己也没写过)，
-        // 这里必须临时开启读权限，否则 rio_writen 读取内存时 Server 会崩溃。
+        // ���ؼ����衿OS ��������
+        // �����ǰҳ���� PROT_NONE (������Ϊ���˱������������Լ�Ҳûд��)��
+        // ���������ʱ������Ȩ�ޣ����� rio_writen ��ȡ�ڴ�ʱ Server �������
         mprotect(page_ptr, DSM_PAGE_SIZE, PROT_READ);
 
-        // 1. 构造头部：使用 PAGE_REP，标记 unused=1 (代表数据)
+        // 1. ����ͷ����ʹ�� PAGE_REP����� unused=1 (��������)
         dsm_header_t rep_head = {0};
         rep_head.type = DSM_MSG_PAGE_REP;
-        rep_head.src_node_id = state.my_node_id;
+        rep_head.src_node_id = dsm_getnodeid();
         rep_head.seq_num = head.seq_num;
-        rep_head.payload_len = DSM_PAGE_SIZE; // 固定 4096
-        rep_head.unused = 1; // <--- 1 表示负载是 Data
+        rep_head.payload_len = DSM_PAGE_SIZE; // �̶� 4096
+        rep_head.unused = 1; // <--- 1 ��ʾ������ Data
 
-        // 2. 发送头部
+        // 2. ����ͷ��
         rio_writen(sock, &rep_head, sizeof(rep_head));
 
-        // 3. 发送数据 (4KB)
+        // 3. �������� (4KB)
         rio_writen(sock, page_ptr, DSM_PAGE_SIZE);
 
-        // 4. 移交所有权 (根据协议，发送即移交)
-        // 更新本地页表
+        // 4. �ƽ�����Ȩ (����Э�飬���ͼ��ƽ�)
+        // ���±���ҳ��
         if (record) {
             record->owner_id = head.src_node_id;
         } else {
@@ -66,42 +65,80 @@ void process_page_req(int sock, const dsm_header_t& head, const payload_page_req
             state.page_table.Insert(page_addr_int, new_rec);
         }
 
-        // 【关键步骤】设置本地不可访问
-        // 既然数据给了别人，我本地就失效了(Invalidate)，防止产生不一致
+        // ���ؼ����衿���ñ��ز��ɷ���
+        // ��Ȼ���ݸ��˱��ˣ��ұ��ؾ�ʧЧ��(Invalidate)����ֹ������һ��
         mprotect(page_ptr, DSM_PAGE_SIZE, PROT_NONE);
 
         std::cout << "  -> Data sent. Ownership transferred." << std::endl;
     } 
     // ============================================================
-    // Case B: 我不是 Owner -> 重定向 (Redirect)
+    // Case B: �Ҳ��� Owner -> �ض��� (Redirect)
     // ============================================================
-    else {
-        // 如果查不到记录且我也不是Manager，那大概率应该找Manager，或者Hash计算出的ProbOwner
-        if (current_owner == -1) current_owner = 1; 
-
-        std::cout << "[DSM] Redirect Page " << body.page_index << ": Me(" << state.my_node_id 
+    else if (current_owner != -1 && current_owner != ::NodeId) {
+        // ����鲻����¼����Ҳ����Manager���Ǵ����Ӧ����Manager������Hash�������ProbOwner
+        
+        std::cout << "[DSM] Redirect Page " << body.page_index << ": Me(" << ::NodeId 
                   << ") -> RealOwner(" << current_owner << ")" << std::endl;
 
-        // 1. 构造头部：PAGE_REP，标记 unused=0 (代表重定向)
+        // 1. ����ͷ����PAGE_REP����� unused=0 (�����ض���)
         dsm_header_t rep_head = {0};
         rep_head.type = DSM_MSG_PAGE_REP; 
-        rep_head.src_node_id = state.my_node_id;
+        rep_head.src_node_id = dsm_getnodeid();
         rep_head.seq_num = head.seq_num;
         rep_head.payload_len = sizeof(payload_page_rep_t);
-        rep_head.unused = 0; // <--- 0 表示负载是 Redirect Info
+        rep_head.unused = 0; // <--- 0 ��ʾ������ Redirect Info
 
-        // 2. 构造 Body
+        // 2. ���� Body
         payload_page_rep_t rep_body;
         rep_body.page_index = body.page_index;
-        rep_body.requester_id = current_owner; // 复用字段存 RealOwner ID
+        rep_body.requester_id = current_owner; // �����ֶδ� RealOwner ID
 
-        // 3. 发送
-        rio_writen(sock, &rep_head, sizeof(rep_head));
-        rio_writen(sock, &rep_body, sizeof(rep_body));
+        // 3. ����
+        
+        send(sock, (const char*)&rep_head, sizeof(rep_head), 0);
+        send(sock, (const char*)&rep_body, sizeof(rep_body), 0);
     }
     // ============================================================
-    // Case C: 
+    // Case C: pageδ���䣬������node 0 -> Ĭ������Owner
     // ============================================================
+    else if (current_owner == -1 && ::NodeId == 0) {
+        std::cout << "[DSM] Serving Page " << body.page_index << " to Node " << head.src_node_id << " (Default Owner)" << std::endl;
+
+        // ���ؼ����衿OS ��������
+        mprotect(page_ptr, DSM_PAGE_SIZE, PROT_READ);
+
+        // 1. ����ͷ����ʹ�� PAGE_REP����� unused=1 (��������)
+        dsm_header_t rep_head = {0};
+        rep_head.type = DSM_MSG_PAGE_REP;
+        rep_head.src_node_id = dsm_getnodeid() ;
+        rep_head.seq_num = head.seq_num;
+        rep_head.payload_len = DSM_PAGE_SIZE; // �̶� 4096
+        rep_head.unused = 1; // <--- 1 ��ʾ������ Data
+
+        // 2. ����ͷ��
+        send(sock, &rep_head, sizeof(rep_head), 0);
+
+        // 3. �������� (4KB)
+        send(sock, page_ptr, DSM_PAGE_SIZE, 0);
+
+        // 4. �ƽ�����Ȩ (����Э�飬���ͼ��ƽ�)
+        // ���±���ҳ��
+        if (record) {
+            record->owner_id = head.src_node_id;
+        } else {
+            PageRecord new_rec; 
+            new_rec.owner_id = head.src_node_id;
+            state.page_table.Insert(page_addr_int, new_rec);
+        }
+
+        // ���ؼ����衿���ñ��ز��ɷ���
+        mprotect(page_ptr, DSM_PAGE_SIZE, PROT_NONE);
+
+        std::cout << "  -> Data sent. Ownership transferred." << std::endl;
+
+    }
+
+    ::PageTable->LockRelease();
 }
 
 

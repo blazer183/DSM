@@ -30,7 +30,7 @@ MASTER_NODE="heqizheng@10.29.109.58"
 # Workers: used for remote distribution and startup
 WORKER_NODES=(
     "heqizheng@10.112.100.112"
-    "heqizheng@10.29.32.115"
+    #"heqizheng@10.29.32.115"
 )
 
 # All nodes collection (used for stopping and starting)
@@ -84,6 +84,7 @@ for NODE in "${ALL_NODES[@]}"; do
     echo " -> Cleaned up $NODE"
 done
 
+sleep 1
 # ================= 5. Run cluster =================
 echo -e "\n? [4/4] Starting cluster ($TOTAL_PROCESSES processes)..."
 echo "    -> Leader node: 1 process"
@@ -114,7 +115,7 @@ ssh $MASTER_NODE "export DSM_LEADER_IP=127.0.0.1; \
                   nohup $REMOTE_DIR/$EXE_NAME > /tmp/dsm_leader.log 2>&1 &"
 
 # Wait 2 seconds to ensure Leader is fully started and listening
-sleep 2
+
 
 # Round Robin distribute Worker processes to each Worker node
 if [ $WORKER_COUNT -eq 0 ]; then
@@ -155,10 +156,16 @@ echo "   ¡ú Worker IPs: $WORKER_IPS (count: $WORKER_COUNT)"
 echo "   ¡ú Address mapping: PodID#N ¡ú worker_ips[N%$WORKER_COUNT]:$(($LEADER_PORT+N))"
 echo ""
 echo " Log monitoring commands:"
-echo " Leader log: ssh $MASTER_NODE 'tail -f /tmp/dsm_leader.log'"
+echo " Leader log: ssh $MASTER_NODE 'cat /tmp/dsm_leader.log'"
 if [ $WORKER_COUNT -gt 0 ]; then
-    echo " Worker logs: ssh <usr@ip> 'tail -f /tmp/dsm_pod_*.log'"
-    echo " (or specify a specific Pod: dsm_pod_1.log, dsm_pod_2.log, ...)"
+    echo " Worker logs:"
+    for ((i=1; i<=WORKER_PROCESSES; i++)); do
+        POD_ID=$i
+        NODE_INDEX=$((POD_ID % WORKER_COUNT))
+        WORKER_NODE=${WORKER_NODES[$NODE_INDEX]}
+        LISTEN_PORT=$((LEADER_PORT + POD_ID))
+        echo "   Pod#$POD_ID: ssh $WORKER_NODE 'cat /tmp/dsm_pod_$POD_ID.log'"
+    done
 fi
 echo ""
 echo " Stop cluster: pkill -9 -x $EXE_NAME (execute on each node)"

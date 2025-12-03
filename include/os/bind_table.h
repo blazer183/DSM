@@ -2,7 +2,7 @@
 #define OS_BIND_TABLE_H
 
 #include <cstddef>
-#include <cstdint>
+#include <limits>
 #include <string>
 #include <utility>
 
@@ -17,26 +17,23 @@ struct BindRecord {
     std::string file;
 };
 
-class BindTable final : public TableBase<std::uintptr_t, BindRecord> {
+class BindTable final : public TableBase<void *, BindRecord> {
 public:
-    BindTable() = default;
+    using Base = TableBase<void *, BindRecord>;
 
-    using TableBase::Clear;
-    using TableBase::Find;
-    using TableBase::Insert;
-    using TableBase::Remove;
-    using TableBase::Size;
-    using TableBase::Update;
-
-    /* Linear search across bindings to find match by file path. */
-    const BindRecord *FindByFile(const std::string &file_path) const
+    explicit BindTable(std::size_t capacity = 0)
+        : Base(capacity == 0 ? std::numeric_limits<std::size_t>::max() : capacity)
     {
-        for (const auto &kv : this->entries_) {
-            if (kv.second.file == file_path)
-                return &kv.second;
-        }
-        return nullptr;
     }
+
+    using Base::Clear;
+    using Base::Find;
+    using Base::Insert;
+    using Base::Remove;
+    using Base::Size;
+    using Base::Update;
+    using Base::LockAcquire;
+    using Base::LockRelease;
 };
 
 

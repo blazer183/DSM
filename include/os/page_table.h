@@ -26,9 +26,10 @@ public:
     using Base::Remove;
     using Base::Size;
     using Base::Update;
+    using Base::LockAcquire;
+    using Base::LockRelease;
 
-    /* Placeholder for future platform-specific invalidation hooks. */
-    inline bool InvalidateRange(void *, std::size_t, int = 0) const noexcept { return false; }
+    
 };
 
 
