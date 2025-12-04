@@ -1,23 +1,29 @@
+本DSM项目划分为三个部分：concurrent（监听线程部分）net(网络流读取和通信报文规范部分) os（类操作系统部分）
+
+解释一下os: DSM的初衷是让程序员将并发编程无痛迁移到多机上，os部分为程序员提供了并发编程部分系统调用的假象，故此称为os部分
+
+
+
 文件夹 PATH 列表
 卷序列号为 7A53-DBC3
 C:.
-├─config    //集群描述，包括IP，角色，节点ID等
-├─docs      //新人上手必看，包含项目简介，快速上手，使用说明
-├─include   //头文件，展开后供各个模块复用
-│  ├─net    //报文规范，流式读取函数的声明
-│  └─os     //定义页表结构和宏
-├─scripts
-├─src
-│  ├─concurrent //服务端模型
-│  ├─network    //报文规范，流式读取函数封装
-│  ├─os         //客户端模型
-│  └─main.c     //测试程序入口
+├─config    	//集群配置
+├─docs      	//新人上手必看，包含项目简介，快速上手，使用说明
+├─include   	//头文件，展开后供各个模块复用
+│  ├─concurrent    //监听线程部分
+│  ├─net    	//报文规范，流式读取函数的声明
+│  └─os     	//定义全局数据结构
+├─scripts	 //初始化脚本，init_ssh用于配置节点间的ssh登录，launch.sh用于主节点编译后分发可执行程序，分发逻辑为主节点1个进程，从节点进程RR算法分配
+├─src			//源代码实现
+│  ├─concurrent    //监听线程实现
+│  ├─network         //RIO读取函数封装
+│  ├─os    		//dsm用户接口的实现
 └─tests
-    ├─integration   //集成测试
-    └─unit          //单元测试
+    ├─integration     //集成测试
+    └─unit          	//单元测试
 
 
-主要分为src文件夹里的三个模块，其中concurrent与os通过network连接。
+
 
 # 报文通信规范：
 
@@ -74,7 +80,7 @@ struct {
 
 ## 情景2：缺页处理
 
-发送方：计算进程缺页处理函数，发送给哈希后的probowner=hash(page_index)
+发送方：计算进程缺页处理函数，发送的目的地有两种情况，1. probowner=hash(page_index) 2. realowner = recv from probowner
 
 发送消息：
 
@@ -93,7 +99,7 @@ struct {
 }
 ```
 
-回复方：probowner的监听进程，**<u>首先需要处理多个进程争用同一页的问题，必须顺序访问页</u>**（感觉这一步很难处理）；在顺序访问基础上查自己的page table对应表项里的owner_id
+回复方：监听进程，**<u>首先需要处理多个进程争用同一页的问题，必须顺序访问页</u>**（感觉这一步很难处理）；在顺序访问基础上查自己的page table对应表项里的owner_id
 
 ### 情况1：owner_id = -1 && PodId != 0 
 
