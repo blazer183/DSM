@@ -2,12 +2,21 @@
 #define OS_SOCKET_TABLE_H
 
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 
 #include "os/table_base.hpp"
 
 struct SocketRecord {
-	int socket { -1 };
+   int socket { -1 };
+   uint32_t next_seq { 1 };  // per-connection seq counter
+
+   uint32_t allocate_seq() noexcept {
+      uint32_t current = next_seq;
+      // 0 保留不用，溢出后从 1 重新计数
+      next_seq = (next_seq == std::numeric_limits<uint32_t>::max()) ? 1 : next_seq + 1;
+      return current;
+   }
 };
 
 class SocketTable final : public TableBase<int, SocketRecord> {
@@ -27,6 +36,15 @@ public:
    using Base::Update;
    using Base::LockAcquire;
    using Base::LockRelease;
+
+   // 为指定节点分配下一个 seq 号；若记录不存在返回 0
+   uint32_t NextSeq(int node_id) {
+        LockAcquire();
+        auto *record = Find(node_id);
+        uint32_t seq = record ? record->allocate_seq() : 0;
+        LockRelease();
+        return seq;
+   }
 };
 
 #endif /* OS_SOCKET_TABLE_H */

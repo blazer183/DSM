@@ -70,57 +70,31 @@ typedef struct {
 
 
 
-// ================= 详细负载定义 (Payloads) =================
-
-// ---------------- A. 初始化模块 ----------------
-
-
-
-// [DSM_MSG_JOIN_ACK]
-typedef struct {
-    uint16_t assigned_node_id;  // 分配给新人的 ID
-    uint16_t node_count;        // 总节点数 (用于 Hash 计算)
-    uint64_t dsm_mem_size;      // 共享内存总大小
-} __attribute__((packed)) payload_join_ack_t;
-
-
-// ---------------- B. 页面管理模块 ----------------
 
 // [DSM_MSG_PAGE_REQ] Requestor -> Manager
 typedef struct {
     uint32_t page_index;        // 请求的全局页号
 } __attribute__((packed)) payload_page_req_t;
 
-// [DSM_MSG_PAGE_REP] Manager -> RealOwner
-// 含义："Node X 想要 page_index，数据在你这，你发给它"
+// [DSM_MSG_PAGE_REP] Manager -> Requestor
 typedef struct {
-    uint32_t page_index;        // 页号
-    uint16_t requester_id;      // 真正想要数据的节点ID (RealOwner要把数据发给它)
+    uint16_t real_owner_id;
 } __attribute__((packed)) payload_page_rep_t;
 
-// [DSM_MSG_PAGE_DATA] RealOwner -> Requestor
-// 这个包通常不需要 struct 定义，直接 Header + 4096字节数据
-// 如果需要元数据，可以用 unused 字段
-
-
-// ---------------- C. 锁管理模块 ----------------
-
-// [DSM_MSG_LOCK_ACQ] / [DSM_MSG_LOCK_REL] Requestor -> Manager
+// [DSM_MSG_LOCK_ACQ]  Requestor -> Manager
 typedef struct {
     uint32_t lock_id;           // 锁 ID
 } __attribute__((packed)) payload_lock_req_t;
 
 // [DSM_MSG_LOCK_REP] Manager -> Requestor (授予锁)
 typedef struct {
-    uint32_t lock_id;
     uint32_t invalid_set_count; // Scope Consistency: 需要失效的页数量
     // 紧接着后面可以是 invalid_set 列表
     uint32_t realowner;
-
 } __attribute__((packed)) payload_lock_rep_t;
 
 
-// ---------------- D. 维护与确认 ----------------
+
 
 // [DSM_MSG_OWNER_UPDATE] RealOwner -> Manager
 typedef struct {
@@ -130,7 +104,6 @@ typedef struct {
 
 // [DSM_MSG_ACK]
 typedef struct {
-    uint32_t target_seq;     // 确认是对哪个请求的回应
     uint8_t  status;         // 0=OK, 1=Fail
 } __attribute__((packed)) payload_ack_t;
 
