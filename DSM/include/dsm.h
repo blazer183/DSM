@@ -61,7 +61,7 @@ int dsm_mutex_lock(int *mutex);
 int dsm_mutex_unlock(int *mutex);
 
 void dsm_bind(void *addr, const char *name);
-void dsm_barrier(void);
+bool dsm_barrier(void);
 void *dsm_malloc(size_t size);
 
 
