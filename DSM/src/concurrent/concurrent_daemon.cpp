@@ -1,5 +1,5 @@
 // src/concurrent/concurrent_daemon.cpp
-// ¼ò»¯°æ±¾£º½öÊµÏÖ Barrier Í¬²½ËùÐèµÄ JOIN_REQ/ACK ´¦Àí
+// ï¿½ò»¯°æ±¾ï¿½ï¿½ï¿½ï¿½Êµï¿½ï¿½ Barrier Í¬ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ JOIN_REQ/ACK ï¿½ï¿½ï¿½ï¿½
 
 #include <iostream>
 #include <thread>
@@ -15,23 +15,23 @@
 #include "net/protocol.h"
 #include "dsm.h"
 
-// È«¾Ö×´Ì¬£ºJOIN ÇëÇóÊÕ¼¯
+// È«ï¿½ï¿½×´Ì¬ï¿½ï¿½JOIN ï¿½ï¿½ï¿½ï¿½ï¿½Õ¼ï¿½
+
+std::mutex join_mutex;                  // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+std::vector<int> joined_fds;        // ï¿½ï¿½ï¿½ï¿½ï¿½ÓµÄ¿Í»ï¿½ï¿½ï¿½ socket (ï¿½ï¿½ï¿½ï¿½Ë«ï¿½ï¿½Í¨ï¿½ï¿½)
+bool barrier_ready = false;         // ï¿½Ç·ï¿½ï¿½ï¿½ï¿½Ð½ï¿½ï¿½ï¿½ï¿½Ñ¾ï¿½ï¿½ï¿½
 
 
-std::vector<int> joined_fds;        // ÒÑÁ¬½ÓµÄ¿Í»§¶Ë socket (¿ÉÒÔË«ÏòÍ¨ÐÅ)
-bool barrier_ready = false;         // ÊÇ·ñËùÓÐ½ø³ÌÒÑ¾ÍÐ÷
-
-
-// µ¥¸ö¿Í»§¶ËÁ¬½Ó´¦ÀíÏß³Ì
-// ²ÎÊý connfd: accept() ·µ»ØµÄÒÑÁ¬½Ó socket£¬ÕâÊÇÓë¿Í»§¶ËÍ¨ÐÅµÄÎ¨Ò»Í¨µÀ
-// ×¢Òâ£ºpayload ÖÐµÄ listen_port ÊÇ¿Í»§¶ËµÄ daemon ¼àÌý¶Ë¿Ú£¬²»ÊÇÓÃÀ´Á¬½ÓµÄ
+// ï¿½ï¿½ï¿½ï¿½ï¿½Í»ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ó´ï¿½ï¿½ï¿½ï¿½ß³ï¿½
+// ï¿½ï¿½ï¿½ï¿½ connfd: accept() ï¿½ï¿½ï¿½Øµï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ socketï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Í»ï¿½ï¿½ï¿½Í¨ï¿½Åµï¿½Î¨Ò»Í¨ï¿½ï¿½
+// ×¢ï¿½â£ºpayload ï¿½Ðµï¿½ listen_port ï¿½Ç¿Í»ï¿½ï¿½Ëµï¿½ daemon ï¿½ï¿½ï¿½ï¿½ï¿½Ë¿Ú£ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Óµï¿½
 void peer_handler(int connfd) {
     rio_t rp;
     rio_readinit(&rp, connfd);
 
     dsm_header_t header;
 
-    // ¶ÁÈ¡ÏûÏ¢Í·
+    // ï¿½ï¿½È¡ï¿½ï¿½Ï¢Í·
     ssize_t n = rio_readn(&rp, &header, sizeof(dsm_header_t));
     if (n != sizeof(dsm_header_t)) {
         std::cerr << "[DSM Daemon] Failed to read header, closing connection" << std::endl;
@@ -39,7 +39,7 @@ void peer_handler(int connfd) {
         return;
     }
 
-    // ÑéÖ¤ÏûÏ¢ÀàÐÍ
+    // ï¿½ï¿½Ö¤ï¿½ï¿½Ï¢ï¿½ï¿½ï¿½ï¿½
     if (header.type != DSM_MSG_JOIN_REQ) {
         std::cerr << "[DSM Daemon] Received non-JOIN_REQ message: 0x" 
                   << std::hex << (int)header.type << std::dec << std::endl;
@@ -49,7 +49,7 @@ void peer_handler(int connfd) {
 
     std::cout << "[DSM Daemon] Received JOIN_REQ: NodeId=" << header.src_node_id << std::endl; 
 
-    // ¼ÓÈëÒÑÁ¬½ÓÁÐ±í
+    // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ð±ï¿½
     
     
         
@@ -58,20 +58,20 @@ void peer_handler(int connfd) {
         std::cout << "[DSM Daemon] Currently connected: " << joined_fds.size() 
                   << " / " << ProcNum << std::endl;
 
-        // ¼ì²éÊÇ·ñËùÓÐ½ø³Ì¶¼ÒÑÁ¬½Ó
+        // ï¿½ï¿½ï¿½ï¿½Ç·ï¿½ï¿½ï¿½ï¿½Ð½ï¿½ï¿½Ì¶ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
         if (joined_fds.size() == static_cast<size_t>(ProcNum) && !barrier_ready) {
             barrier_ready = true;
         }
     
 
-    // Èç¹ûËùÓÐ½ø³Ì¾ÍÐ÷£¬ÅúÁ¿·¢ËÍ ACK
+    // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ð½ï¿½ï¿½Ì¾ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ACK
     if (barrier_ready) {
         std::cout << "[DSM Daemon] All processes ready, broadcasting JOIN_ACK..." << std::endl;
 
         dsm_header_t ack_header;
         ack_header.type = DSM_MSG_JOIN_ACK;
-        ack_header.payload_len = 0;  // ÎÞ payload
-        ack_header.src_node_id = NodeId;  // ¸æËß¿Í»§¶ËÕâÊÇË­·¢µÄ
+        ack_header.payload_len = 0;  // ï¿½ï¿½ payload
+        ack_header.src_node_id = NodeId;  // ï¿½ï¿½ï¿½ß¿Í»ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ë­ï¿½ï¿½ï¿½ï¿½
         ack_header.seq_num = 0;
 
         std::lock_guard<std::mutex> lock(join_mutex);
@@ -101,25 +101,25 @@ void peer_handler(int connfd) {
         std::cout << "[DSM Daemon] ? Barrier synchronization complete!" << std::endl;
     }
 
-    // ±£³ÖÁ¬½Ó´ò¿ª£¬ÓÉ¿Í»§¶Ë¾ö¶¨ºÎÊ±¹Ø±Õ
-    // »òÕßÓÃÓÚºóÐøÍ¨ÐÅ£¨Èç PAGE_REQ/LOCK_REQ£©
+    // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ó´ò¿ª£ï¿½ï¿½É¿Í»ï¿½ï¿½Ë¾ï¿½ï¿½ï¿½ï¿½ï¿½Ê±ï¿½Ø±ï¿½
+    // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Úºï¿½ï¿½ï¿½Í¨ï¿½Å£ï¿½ï¿½ï¿½ PAGE_REQ/LOCK_REQï¿½ï¿½
 }
 
-// Ö÷¼àÌýÏß³Ì
+// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ß³ï¿½
 void dsm_start_daemon(int port) {
     int listenfd, connfd;
     struct sockaddr_in clientaddr;
     socklen_t clientlen;
     struct sockaddr_in serveraddr;
 
-    // 1. ´´½¨¼àÌý socket
+    // 1. ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ socket
     listenfd = socket(AF_INET, SOCK_STREAM, 0);
     if (listenfd < 0) {
         perror("[DSM Daemon] socket creation failed");
         return;
     }
 
-    // 2. ÔÊÐí¶Ë¿Ú¸´ÓÃ£¨±ÜÃâ TIME_WAIT ×´Ì¬µ¼ÖÂ°ó¶¨Ê§°Ü£©
+    // 2. ï¿½ï¿½ï¿½ï¿½ï¿½Ë¿Ú¸ï¿½ï¿½Ã£ï¿½ï¿½ï¿½ï¿½ï¿½ TIME_WAIT ×´Ì¬ï¿½ï¿½ï¿½Â°ï¿½Ê§ï¿½Ü£ï¿½
     int optval = 1;
     if (setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, 
                    (const void *)&optval, sizeof(int)) < 0) {
@@ -128,10 +128,10 @@ void dsm_start_daemon(int port) {
         return;
     }
 
-    // 3. °ó¶¨µ½Ö¸¶¨¶Ë¿Ú£¨9999 + NodeID£©
+    // 3. ï¿½ó¶¨µï¿½Ö¸ï¿½ï¿½ï¿½Ë¿Ú£ï¿½9999 + NodeIDï¿½ï¿½
     bzero((char *)&serveraddr, sizeof(serveraddr));
     serveraddr.sin_family = AF_INET;
-    serveraddr.sin_addr.s_addr = htonl(INADDR_ANY);  // ¼àÌýËùÓÐÍø¿¨
+    serveraddr.sin_addr.s_addr = htonl(INADDR_ANY);  // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
     serveraddr.sin_port = htons((unsigned short)port);
 
 
@@ -141,7 +141,7 @@ void dsm_start_daemon(int port) {
         return;
     }
 
-    // 4. ¿ªÊ¼¼àÌý
+    // 4. ï¿½ï¿½Ê¼ï¿½ï¿½ï¿½ï¿½
     if (listen(listenfd, 1024) < 0) {
         perror("[DSM Daemon] listen failed");
         close(listenfd);
@@ -150,19 +150,19 @@ void dsm_start_daemon(int port) {
 
     std::cout << "[DSM Daemon] Listening on port " << port << "..." << std::endl;
 
-    // 5. Ñ­»·½ÓÊÜÁ¬½Ó
+    // 5. Ñ­ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
     while (1) {
         clientlen = sizeof(clientaddr);
         connfd = accept(listenfd, (struct sockaddr *)&clientaddr, &clientlen);
         if (connfd < 0) {
-            continue;  // accept ¿ÉÄÜÒòÐÅºÅÖÐ¶Ï£¬¼ÌÐø¼´¿É
+            continue;  // accept ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Åºï¿½ï¿½Ð¶Ï£ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
         }
 
-        // 6. ÎªÃ¿¸öÁ¬½ÓÆô¶¯¶ÀÁ¢Ïß³Ì´¦Àí
-        //    connfd ÊÇÒ»¸öÍêÕûµÄË«ÏòÍ¨ÐÅÍ¨µÀ£º
-        //    - Ïß³Ì¿ÉÒÔ´ÓËü read() ½ÓÊÕÏûÏ¢
-        //    - Ïß³Ì¿ÉÒÔÏòËü write() ·¢ËÍ»Ø¸´
+        // 6. ÎªÃ¿ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ß³Ì´ï¿½ï¿½ï¿½
+        //    connfd ï¿½ï¿½Ò»ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ë«ï¿½ï¿½Í¨ï¿½ï¿½Í¨ï¿½ï¿½ï¿½ï¿½
+        //    - ï¿½ß³Ì¿ï¿½ï¿½Ô´ï¿½ï¿½ï¿½ read() ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ï¢
+        //    - ï¿½ß³Ì¿ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ write() ï¿½ï¿½ï¿½Í»Ø¸ï¿½
         std::thread t(peer_handler, connfd);
-        t.detach();  // ·ÖÀëÏß³Ì£¬ÈÃËü×Ô¼ºÔËÐÐ
+        t.detach();  // ï¿½ï¿½ï¿½ï¿½ï¿½ß³Ì£ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ô¼ï¿½ï¿½ï¿½ï¿½ï¿½
     }
 }

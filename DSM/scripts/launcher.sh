@@ -10,7 +10,7 @@ export LANGUAGE=en_US:en
 # --- Project path ---
 SOURCE_DIR="$HOME/dsm"        # Your source root directory
 #BUILD_CMD="make -j4" # Your build command
-BUILD_CMD='g++ -std=c++17 -pthread -DUNITEST -I"DSM/include" test_dsm.cpp "DSM/src/os/dsm_os.cpp" "DSM/src/os/client_end.cpp" "DSM/src/os/segv_handler.cpp" "DSM/src/concurrent/concurrent_daemon.cpp"  "DSM/src/network/connection.cpp" -o dsm_app -lpthread'
+BUILD_CMD='g++ -std=c++17 -pthread -DUNITEST -I"DSM/include" test_dsm.cpp "DSM/src/os/dsm_os.cpp" "DSM/src/os/pfhandler.cpp" "DSM/src/concurrent/concurrent_daemon.cpp" "DSM/src/network/connection.cpp" -o dsm_app -lpthread'
 EXE_NAME="dsm_app"                      # The name of the compiled executable
 
 # --- Deployment target path (uniform across all machines) ---
@@ -147,13 +147,13 @@ fi
 echo -e "\n? =========================================="
 echo " DSM cluster has been fully started! ($TOTAL_PROCESSES Pods)"
 echo " Pod distribution strategy:"
-echo "   ¡ú Leader Pod: $MASTER_NODE (PodID=0, Port=9999)"
-echo "   ¡ú Worker Pods: $WORKER_PROCESSES Pods distributed Round Robin"
-echo "   ¡ú Port mapping: Pod#N listens on port $LEADER_PORT+N"
+echo "   ï¿½ï¿½ Leader Pod: $MASTER_NODE (PodID=0, Port=9999)"
+echo "   ï¿½ï¿½ Worker Pods: $WORKER_PROCESSES Pods distributed Round Robin"
+echo "   ï¿½ï¿½ Port mapping: Pod#N listens on port $LEADER_PORT+N"
 echo " Cluster network:"
-echo "   ¡ú Leader IP: $LEADER_IP (PodID=0 fixed)"
-echo "   ¡ú Worker IPs: $WORKER_IPS (count: $WORKER_COUNT)"
-echo "   ¡ú Address mapping: PodID#N ¡ú worker_ips[N%$WORKER_COUNT]:$(($LEADER_PORT+N))"
+echo "   ï¿½ï¿½ Leader IP: $LEADER_IP (PodID=0 fixed)"
+echo "   ï¿½ï¿½ Worker IPs: $WORKER_IPS (count: $WORKER_COUNT)"
+echo "   ï¿½ï¿½ Address mapping: PodID#N ï¿½ï¿½ worker_ips[N%$WORKER_COUNT]:$(($LEADER_PORT+N))"
 echo ""
 echo " Log monitoring commands:"
 echo " Leader log: ssh $MASTER_NODE 'cat /tmp/dsm_leader.log'"

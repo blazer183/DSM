@@ -41,13 +41,13 @@ int NodeId = -1;
 void *SharedAddrBase = nullptr;
 int ProcNum = 0;
 int WorkerNodeNum = 0;
-std::vector<std::string> WorkerNodeIps;  // Ê¹ÓÃvector´æ´¢IPÁÐ±í
+std::vector<std::string> WorkerNodeIps;  // Ê¹ï¿½ï¿½vectorï¿½æ´¢IPï¿½Ð±ï¿½
 
 STATIC std::string LeaderNodeIp;
 STATIC int LeaderNodePort = 0;
 STATIC int LeaderNodeSocket = -1;
 STATIC int LockNum = 0;
-STATIC void * SharedAddrCurrentLoc = nullptr;   //µ±Ç°¹²ÏíÇø·ÖÅäÎ»ÖÃ
+STATIC void * SharedAddrCurrentLoc = nullptr;   //ï¿½ï¿½Ç°ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Î»ï¿½ï¿½
 
 
 std::string GetPodIp(int pod_id) {
@@ -140,20 +140,21 @@ bool FetchGlobalData(int dsm_memsize)
                   << ", base=" << SharedAddrBase << ", pages=" << SharedPages << ")" << std::endl;
         return false;
     }
+    return true;
 }
 
 bool InitDataStructs(int dsm_memsize)
 {   
-    // ·ÖÅä¹²ÏíÄÚ´æÇøÓò
+    // ï¿½ï¿½ï¿½ä¹²ï¿½ï¿½ï¿½Ú´ï¿½ï¿½ï¿½ï¿½ï¿½
     if (SharedAddrBase != nullptr && SharedPages != 0){
         const size_t total_size = (size_t)dsm_memsize;
         void* mapped_addr = ::mmap(
-            SharedAddrBase,                    // ¹Ì¶¨ÆðÊ¼µØÖ·
-            total_size,                        // ·ÖÅä´óÐ¡
-            PROT_NONE,                        // ³õÊ¼ÎÞÈ¨ÏÞ£¬´¥·¢È±Ò³Òì³£
-            MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED,  // Ë½ÓÐÄäÃûÓ³Éä£¬¹Ì¶¨µØÖ·
-            -1,                               // ÎÞÎÄ¼þÃèÊö·û
-            0                                 // Æ«ÒÆÁ¿Îª0
+            SharedAddrBase,                    // ï¿½Ì¶ï¿½ï¿½ï¿½Ê¼ï¿½ï¿½Ö·
+            total_size,                        // ï¿½ï¿½ï¿½ï¿½ï¿½Ð¡
+            PROT_NONE,                        // ï¿½ï¿½Ê¼ï¿½ï¿½È¨ï¿½Þ£ï¿½ï¿½ï¿½ï¿½ï¿½È±Ò³ï¿½ì³£
+            MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED,  // Ë½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ó³ï¿½ä£¬ï¿½Ì¶ï¿½ï¿½ï¿½Ö·
+            -1,                               // ï¿½ï¿½ï¿½Ä¼ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+            0                                 // Æ«ï¿½ï¿½ï¿½ï¿½Îª0
         );
         if (mapped_addr == MAP_FAILED) {
             std::cerr << "[dsm] mmap failed at address " << SharedAddrBase 
@@ -168,7 +169,7 @@ bool InitDataStructs(int dsm_memsize)
     }
 
 
-    // ³õÊ¼»¯Ò³±í¡¢Ëø±í¡¢Bind±í
+    // ï¿½ï¿½Ê¼ï¿½ï¿½Ò³ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Bindï¿½ï¿½
     if (PageTable == nullptr)
         PageTable = new (::std::nothrow) class PageTable();
     if (LockTable == nullptr)
@@ -190,7 +191,7 @@ bool dsm_barrier()
 {
     std::string target_ip = LeaderNodeIp;
 
-    // ¼ì²éÊÇ·ñÒÑÓÐ³¤Á¬½Ó£¬ÓÐÔò¸´ÓÃ£¬ÎÞÔò½¨Á¢
+    // ï¿½ï¿½ï¿½ï¿½Ç·ï¿½ï¿½ï¿½ï¿½Ð³ï¿½ï¿½ï¿½ï¿½Ó£ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ã£ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
     int leader_sock = LeaderNodeSocket;
     if (leader_sock == -1) {
         leader_sock = ::socket(AF_INET, SOCK_STREAM, 0);
@@ -203,20 +204,20 @@ bool dsm_barrier()
             ::close(leader_sock);
             return false;
         }
-        LeaderNodeSocket = leader_sock;  // ±£´æÁ¬½ÓÒÔ±ãºóÐø¸´ÓÃ
+        LeaderNodeSocket = leader_sock;  // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ô±ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
     }
 
     
     dsm_header_t req = {
         DSM_MSG_JOIN_REQ,                    
         0,                       // unused
-        htons(NodeId),           // src_node_id: Ê¹ÓÃÔ¤·ÖÅäµÄID 
+        htons(NodeId),           // src_node_id: Ê¹ï¿½ï¿½Ô¤ï¿½ï¿½ï¿½ï¿½ï¿½ID 
         htonl(1),                // seq_num: 1 
         0                       // payload length
     };
     ::send(leader_sock, &req, sizeof(req), 0);
 
-    // µÈ´ýLeaderÈ·ÈÏËùÓÐ½ø³Ì¾ÍÐ÷ºóµÄ»Ø¸´
+    // ï¿½È´ï¿½LeaderÈ·ï¿½ï¿½ï¿½ï¿½ï¿½Ð½ï¿½ï¿½Ì¾ï¿½ï¿½ï¿½ï¿½ï¿½Ä»Ø¸ï¿½
     rio_t rio;
     rio_readinit(&rio, leader_sock);
     
@@ -226,7 +227,7 @@ bool dsm_barrier()
     return true;
 }
 
-int dsm_init(int dsm_memsize)       //argc argvÓÃÓÚ´«µÝ
+int dsm_init(int dsm_memsize)       //argc argvï¿½ï¿½ï¿½Ú´ï¿½ï¿½ï¿½
 {
     if (!FetchGlobalData(dsm_memsize))
         return -1;
@@ -278,7 +279,7 @@ int dsm_mutex_lock(int *mutex){
     SocketTable->LockRelease();
 
     if (!has_connection) {
-        //½¨Á¢Á¬½Ó
+        //ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
         std::string lockprobownerIP = GetPodIp(lockprobowner);
         int lockprotownerPort = GetPodPort(lockprobowner);
         int sock = ::socket(AF_INET, SOCK_STREAM, 0);
@@ -298,11 +299,12 @@ int dsm_mutex_lock(int *mutex){
         SocketTable->Insert(lockprobowner, SocketRecord{sock});
         SocketTable->LockRelease();
     }
-    //ÇëÇóËø
-    //²é¿´±£ÁôÎ»£¬ÊÇ·ñÊÇËøÅú×¼
-    //Èç¹û²»ÊÇ£¬½«ÐÂ»ñµÃID·¢ËÍËøÉêÇë
-    //»ñµÃËø£¬Í¬Ê±Ïòprobowner·¢ËÍËøÓµÓÐÕß¸üÐÂÏûÏ¢
-    //µÈ´ýACK£¬ÕâÒ»ÂÖÍê³É
+    // TODO: Send lock request message
+    // Check if lock is already acquired locally
+    // If not, retrieve real owner ID and send request
+    // Meanwhile send message to probowner to get real owner info
+    // Wait for ACK and return accordingly
+    return 0; // Placeholder - function needs full implementation
 }
 
 int dsm_mutex_unlock(int *mutex){
@@ -314,7 +316,7 @@ int dsm_mutex_unlock(int *mutex){
     if(record == nullptr){
         LockTable->LockRelease();
         std::cerr << "[dsm_mutex_unlock] Invalid mutex ID: " << *mutex << std::endl;
-        return -1; // Ëø²»´æÔÚ 
+        return -1; // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ 
     }
     record->locked = false;
     LockTable->Update(*mutex, *record);
@@ -332,7 +334,7 @@ void dsm_bind(void *addr, const char *name){
 }
 
 void *dsm_malloc(size_t size){
-    if(SharedAddrCurrentLoc + size > SharedAddrBase + SharedPages * PageSize){
+    if(SharedAddrCurrentLoc + size > SharedAddrBase + SharedPages * DSM_PAGE_SIZE){
         std::cerr << "[dsm_malloc] Out of shared memory!" << std::endl;
         return nullptr;
     }
