@@ -6,3 +6,9 @@ dsm_app
 local DSM
 /tmp/
 *.log
+_codeql_*
+*_codeql_*
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
