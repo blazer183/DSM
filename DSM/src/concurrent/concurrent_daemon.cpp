@@ -1,5 +1,5 @@
 // src/concurrent/concurrent_daemon.cpp
-// �򻯰汾����ʵ�� Barrier ͬ������� JOIN_REQ/ACK ����
+// Simplified implementation of Barrier synchronization and JOIN_REQ/ACK handling
 
 #include <iostream>
 #include <thread>
@@ -15,11 +15,11 @@
 #include "net/protocol.h"
 #include "dsm.h"
 
-// ȫ��״̬��JOIN �����ռ�
+// Global state for JOIN barrier synchronization
 
-std::mutex join_mutex;                  // ��������
-std::vector<int> joined_fds;        // �����ӵĿͻ��� socket (����˫��ͨ��)
-bool barrier_ready = false;         // �Ƿ����н����Ѿ���
+std::mutex join_mutex;                  // Protects shared state
+std::vector<int> joined_fds;           // Connected client sockets (bidirectional channels)
+bool barrier_ready = false;            // Whether all processes have joined
 
 
 // Handle client connection processing thread
@@ -99,14 +99,14 @@ void peer_handler(int connfd) {
     // For follow-up messages like PAGE_REQ/LOCK_REQ
 }
 
-// �������߳�
+// Daemon listener thread
 void dsm_start_daemon(int port) {
     int listenfd, connfd;
     struct sockaddr_in clientaddr;
     socklen_t clientlen;
     struct sockaddr_in serveraddr;
 
-    // 1. �������� socket
+    // 1. Create listening socket
     listenfd = socket(AF_INET, SOCK_STREAM, 0);
     if (listenfd < 0) {
         perror("[DSM Daemon] socket creation failed");
