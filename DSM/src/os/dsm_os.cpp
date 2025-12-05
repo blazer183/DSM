@@ -115,7 +115,7 @@ bool LaunchListenerThread(int Port)
 
 bool FetchGlobalData(int dsm_memsize)    
 {
-    SharedPages = static_cast<size_t>(dsm_memsize) / PAGESIZE;
+    SharedPages = static_cast<size_t>(dsm_memsize) / DSM_PAGE_SIZE;
     SharedAddrBase = reinterpret_cast<void *>(0x4000000000ULL); 
     SharedAddrCurrentLoc = SharedAddrBase;
     if (!GetEnvVar("DSM_LEADER_IP", LeaderNodeIp, std::string(""), true)) exit(1);
@@ -299,12 +299,16 @@ int dsm_mutex_lock(int *mutex){
         SocketTable->Insert(lockprobowner, SocketRecord{sock});
         SocketTable->LockRelease();
     }
-    // TODO: Send lock request message
-    // Check if lock is already acquired locally
-    // If not, retrieve real owner ID and send request
-    // Meanwhile send message to probowner to get real owner info
-    // Wait for ACK and return accordingly
-    return 0; // Placeholder - function needs full implementation
+    // TODO: Full lock acquisition protocol implementation
+    // The complete implementation should:
+    // 1. Check if lock is already acquired locally
+    // 2. If not local, retrieve real owner ID from probowner
+    // 3. Send LOCK_ACQ message to real owner
+    // 4. Wait for LOCK_REP response
+    // 5. Update local lock table based on response
+    // For now, return 0 as placeholder for unit testing purposes
+    // This function needs full implementation for production use
+    return 0;
 }
 
 int dsm_mutex_unlock(int *mutex){
