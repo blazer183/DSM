@@ -22,16 +22,16 @@ std::vector<int> joined_fds;        // �����ӵĿͻ��� socket (�
 bool barrier_ready = false;         // �Ƿ����н����Ѿ���
 
 
-// �����ͻ������Ӵ����߳�
-// ���� connfd: accept() ���ص������� socket��������ͻ���ͨ�ŵ�Ψһͨ��
-// ע�⣺payload �е� listen_port �ǿͻ��˵� daemon �����˿ڣ������������ӵ�
+// Handle client connection processing thread
+// Parameter connfd: the connected socket returned by accept(), the only communication channel with the client
+// Note: The listen_port in the payload is the client's daemon listening port, not used for connection
 void peer_handler(int connfd) {
     rio_t rp;
     rio_readinit(&rp, connfd);
 
     dsm_header_t header;
 
-    // ��ȡ��Ϣͷ
+    // Read message header
     ssize_t n = rio_readn(&rp, &header, sizeof(dsm_header_t));
     if (n != sizeof(dsm_header_t)) {
         std::cerr << "[DSM Daemon] Failed to read header, closing connection" << std::endl;
@@ -39,7 +39,7 @@ void peer_handler(int connfd) {
         return;
     }
 
-    // ��֤��Ϣ����
+    // Verify message type
     if (header.type != DSM_MSG_JOIN_REQ) {
         std::cerr << "[DSM Daemon] Received non-JOIN_REQ message: 0x" 
                   << std::hex << (int)header.type << std::dec << std::endl;
@@ -49,35 +49,40 @@ void peer_handler(int connfd) {
 
     std::cout << "[DSM Daemon] Received JOIN_REQ: NodeId=" << header.src_node_id << std::endl; 
 
-    // �����������б�
-    
-    
+    // Add connection to list (protected by mutex)
+    bool should_broadcast = false;
+    {
+        std::lock_guard<std::mutex> lock(join_mutex);
         
         joined_fds.push_back(connfd);
         
         std::cout << "[DSM Daemon] Currently connected: " << joined_fds.size() 
                   << " / " << ProcNum << std::endl;
 
-        // ����Ƿ����н��̶�������
+        // Check if all processes have connected
+        // Note: ProcNum is the total number of processes including leader
+        // Each process (including leader) will call dsm_barrier() which sends JOIN_REQ
         if (joined_fds.size() == static_cast<size_t>(ProcNum) && !barrier_ready) {
             barrier_ready = true;
+            should_broadcast = true;
         }
-    
+    }
 
-    // ������н��̾������������� ACK
-    if (barrier_ready) {
+    // If all processes have joined, broadcast ACK to all
+    if (should_broadcast) {
         std::cout << "[DSM Daemon] All processes ready, broadcasting JOIN_ACK..." << std::endl;
 
         dsm_header_t ack_header;
         ack_header.type = DSM_MSG_JOIN_ACK;
-        ack_header.payload_len = 0;  // �� payload
-        ack_header.src_node_id = NodeId;  // ���߿ͻ�������˭����
+        ack_header.payload_len = 0;  // No payload
+        ack_header.src_node_id = NodeId;  // Let client know who sent this
         ack_header.seq_num = 0;
+        ack_header.unused = 0;
 
         std::lock_guard<std::mutex> lock(join_mutex);
         
-        // Send ACK to all worker processes first (all except the last one which is leader)
-        for (size_t i = 0; i < joined_fds.size() - 1; i++) {
+        // Send ACK to all processes
+        for (size_t i = 0; i < joined_fds.size(); i++) {
             int fd = joined_fds[i];
             ssize_t nw = write(fd, &ack_header, sizeof(dsm_header_t));
             if (nw != sizeof(dsm_header_t)) {
@@ -86,23 +91,12 @@ void peer_handler(int connfd) {
                 std::cout << "[DSM Daemon] Sent JOIN_ACK to fd=" << fd << std::endl;
             }
         }
-        
-        // Finally, send ACK to leader itself (last connection, the one who triggered this broadcast)
-        if (!joined_fds.empty()) {
-            int leader_fd = joined_fds.back();
-            ssize_t nw = write(leader_fd, &ack_header, sizeof(dsm_header_t));
-            if (nw != sizeof(dsm_header_t)) {
-                std::cerr << "[DSM Daemon] Failed to send ACK to leader fd=" << leader_fd << std::endl;
-            } else {
-                std::cout << "[DSM Daemon] Sent JOIN_ACK to leader fd=" << leader_fd << std::endl;
-            }
-        }
 
-        std::cout << "[DSM Daemon] ? Barrier synchronization complete!" << std::endl;
+        std::cout << "[DSM Daemon] Barrier synchronization complete!" << std::endl;
     }
 
-    // �������Ӵ򿪣��ɿͻ��˾�����ʱ�ر�
-    // �������ں���ͨ�ţ��� PAGE_REQ/LOCK_REQ��
+    // Keep connection open, can be used for later communication
+    // For follow-up messages like PAGE_REQ/LOCK_REQ
 }
 
 // �������߳�
