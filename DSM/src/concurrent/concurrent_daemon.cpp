@@ -20,6 +20,7 @@
 std::mutex join_mutex;                  // Protects shared state
 std::vector<int> joined_fds;           // Connected client sockets (bidirectional channels)
 bool barrier_ready = false;            // Whether all processes have joined
+int joined_count = 0;                  // Counter for joined processes (protected by join_mutex)
 
 
 // Handle client connection processing thread
@@ -56,14 +57,15 @@ void peer_handler(int connfd) {
                 std::lock_guard<std::mutex> lock(join_mutex);
                 
                 joined_fds.push_back(connfd);
+                joined_count++;  // Increment the counter
                 
-                std::cout << "[DSM Daemon] Currently connected: " << joined_fds.size() 
+                std::cout << "[DSM Daemon] Currently connected: " << joined_count 
                           << " / " << ProcNum << std::endl;
 
                 // Check if all processes have connected
                 // Note: ProcNum is the total number of processes including leader
                 // Each process (including leader) will call dsm_barrier() which sends JOIN_REQ
-                if (joined_fds.size() == static_cast<size_t>(ProcNum) && !barrier_ready) {
+                if (joined_count == ProcNum && !barrier_ready) {
                     barrier_ready = true;
                     should_broadcast = true;
                 }
@@ -179,6 +181,78 @@ void peer_handler(int connfd) {
                 return;
             }
         } 
+        else if (header.type == DSM_MSG_OWNER_UPDATE) {
+            // Handle lock/page owner update
+            payload_owner_update_t update_payload;
+            if (rio_readn(&rp, &update_payload, sizeof(update_payload)) != sizeof(update_payload)) {
+                std::cerr << "[DSM Daemon] Failed to read OWNER_UPDATE payload" << std::endl;
+                close(connfd);
+                return;
+            }
+            
+            uint32_t resource_id = ntohl(update_payload.resource_id);
+            uint16_t new_owner = ntohs(update_payload.new_owner_id);
+            uint16_t requester_id = ntohs(header.src_node_id);
+            
+            // Check if this is a lock table update (unused = 0) or page table update (unused = 1)
+            if (header.unused == 0) {
+                // Lock table update
+                std::cout << "[DSM Daemon] Received OWNER_UPDATE for lock " << resource_id 
+                          << " from NodeId=" << requester_id << ", new owner=" << new_owner << std::endl;
+                
+                LockTable->LockAcquire();
+                auto lock_rec = LockTable->Find(resource_id);
+                if (lock_rec != nullptr) {
+                    lock_rec->owner_id = new_owner;
+                    lock_rec->locked = true;
+                    LockTable->Update(resource_id, *lock_rec);
+                } else {
+                    // Insert new lock record
+                    LockTable->Insert(resource_id, LockRecord(new_owner));
+                }
+                LockTable->LockRelease();
+                
+                std::cout << "[DSM Daemon] Updated lock " << resource_id 
+                          << " owner to NodeId=" << new_owner << std::endl;
+            } else {
+                // Page table update (unused = 1)
+                std::cout << "[DSM Daemon] Received OWNER_UPDATE for page " << resource_id 
+                          << " from NodeId=" << requester_id << ", new owner=" << new_owner << std::endl;
+                
+                PageTable->LockAcquire();
+                auto page_rec = PageTable->Find(resource_id);
+                if (page_rec != nullptr) {
+                    page_rec->owner_id = new_owner;
+                    PageTable->Update(resource_id, *page_rec);
+                }
+                PageTable->LockRelease();
+                
+                std::cout << "[DSM Daemon] Updated page " << resource_id 
+                          << " owner to NodeId=" << new_owner << std::endl;
+            }
+            
+            // Send ACK
+            dsm_header_t ack_header;
+            ack_header.type = DSM_MSG_ACK;
+            ack_header.unused = 0;
+            ack_header.src_node_id = htons(NodeId);
+            ack_header.seq_num = header.seq_num;
+            ack_header.payload_len = htonl(sizeof(payload_ack_t));
+            
+            payload_ack_t ack_payload;
+            ack_payload.status = 0;  // OK
+            
+            if (write(connfd, &ack_header, sizeof(ack_header)) != sizeof(ack_header)) {
+                std::cerr << "[DSM Daemon] Failed to send ACK header" << std::endl;
+                close(connfd);
+                return;
+            }
+            if (write(connfd, &ack_payload, sizeof(ack_payload)) != sizeof(ack_payload)) {
+                std::cerr << "[DSM Daemon] Failed to send ACK payload" << std::endl;
+                close(connfd);
+                return;
+            }
+        }
         else {
             std::cerr << "[DSM Daemon] Received unknown message type: 0x" 
                       << std::hex << (int)header.type << std::dec << std::endl;
