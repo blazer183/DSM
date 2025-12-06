@@ -415,6 +415,9 @@ int dsm_mutex_lock(int *mutex){
             if (lockprobowner != probowner_id) {
                 // We need to inform the probowner about the ownership change
                 // Get probowner's socket to send OWNER_UPDATE
+                int probowner_sock = -1;
+                uint32_t update_seq = 0;
+                
                 SocketTable->LockAcquire();
                 auto probowner_socket_rec = SocketTable->Find(probowner_id);
                 if (probowner_socket_rec == nullptr) {
@@ -440,8 +443,8 @@ int dsm_mutex_lock(int *mutex){
                     probowner_socket_rec = SocketTable->Find(probowner_id);
                 }
                 
-                int probowner_sock = probowner_socket_rec->socket;
-                uint32_t update_seq = probowner_socket_rec->allocate_seq();
+                probowner_sock = probowner_socket_rec->socket;
+                update_seq = probowner_socket_rec->allocate_seq();
                 SocketTable->LockRelease();
                 
                 // Send OWNER_UPDATE message to probowner
