@@ -253,7 +253,7 @@ int dsm_mutex_init(){
     LockTable->LockAcquire();
     LockTable->Insert(++LockNum, LockRecord());
     LockTable->LockRelease();
-    return 0;
+    return LockNum;
 }
 
 int dsm_mutex_destroy(int *mutex){

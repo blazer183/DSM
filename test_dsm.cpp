@@ -58,11 +58,18 @@ int main()
     std::cout << std::endl;
     
     // ============ 4. Clean up and exit ============
-    std::cout << "[Step 4] Cleaning up resources and exiting..." << std::endl;
-    
+    std::cout << "[Step 4] verify lock aquire..." << std::endl;
+    int lock_A = dsm_mutex_init();
+    dsm_mutex_lock(&lock_A);
+    std::cout<<"I'm "<< node_id <<" and I get lock A!"<<std::endl;
+    sleep(3);
+    std::cout << "See? No one can get lock A because I locked it!..." << std::endl;
+    dsm_mutex_unlock(&lock_A);
+
+    std::cout << "[Step 5] Cleaning up resources and exiting..." << std::endl;
     // Call dsm_finalize() if available
     // dsm_finalize();
-    //sleep(5); //确保日志输出完整
+    //sleep(5); 
     
     std::cout << "INFO: Program terminated normally" << std::endl;
     std::cout << "\n========================================" << std::endl;
