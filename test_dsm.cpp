@@ -68,7 +68,7 @@ int main()
 
     std::cout << "[Step 5] Cleaning up resources and exiting..." << std::endl;
     // Call dsm_finalize() if available
-    // dsm_finalize();
+    dsm_finalize();
     //sleep(5); 
     
     std::cout << "INFO: Program terminated normally" << std::endl;

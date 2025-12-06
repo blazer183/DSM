@@ -13,7 +13,6 @@ struct SocketRecord {
 
    uint32_t allocate_seq() noexcept {
       uint32_t current = next_seq;
-      // 0 ±£Áô²»ÓÃ£¬Òç³öºó´Ó 1 ÖØÐÂ¼ÆÊý
       next_seq = (next_seq == std::numeric_limits<uint32_t>::max()) ? 1 : next_seq + 1;
       return current;
    }
@@ -37,7 +36,7 @@ public:
    using Base::LockAcquire;
    using Base::LockRelease;
 
-   // ÎªÖ¸¶¨½Úµã·ÖÅäÏÂÒ»¸ö seq ºÅ£»Èô¼ÇÂ¼²»´æÔÚ·µ»Ø 0
+   // ÎªÖ¸ï¿½ï¿½ï¿½Úµï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ò»ï¿½ï¿½ seq ï¿½Å£ï¿½ï¿½ï¿½ï¿½ï¿½Â¼ï¿½ï¿½ï¿½ï¿½ï¿½Ú·ï¿½ï¿½ï¿½ 0
    uint32_t NextSeq(int node_id) {
         LockAcquire();
         auto *record = Find(node_id);

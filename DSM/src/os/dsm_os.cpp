@@ -244,7 +244,9 @@ int dsm_getnodeid(void){
     return NodeId;
 }
 
-int dsm_finalize(void);
+int dsm_finalize(void){
+    return dsm_barrier();
+}
 
 int dsm_mutex_init(){
     if (LockTable == nullptr)
@@ -277,6 +279,7 @@ int dsm_mutex_lock(int *mutex){
     auto record = LockTable->Find(lockid);
     if (record != nullptr && record->locked && record->owner_id == NodeId) {
         // Already acquired by this node
+        record->locked = 1;
         LockTable->LockRelease();
         return 0;
     }
@@ -380,17 +383,33 @@ int dsm_mutex_lock(int *mutex){
                 return -1;
             }
             
-            // Update lock table
-            LockTable->LockAcquire();
-            auto lock_rec = LockTable->Find(lockid);
-            if (lock_rec == nullptr) {
-                LockTable->Insert(lockid, LockRecord(NodeId));
-            } else {
-                lock_rec->locked = true;
-                lock_rec->owner_id = NodeId;
-                LockTable->Update(lockid, *lock_rec);
-            }
-            LockTable->LockRelease();
+            // pesudo code:
+            /*
+                get probowner's socket
+                send msg: DSM_MSG_OWNER_UPDATE, with unused bit 0(marked it is locktable not pagetable)
+                struct {
+                    DSM_MSG_OWNER_UPDATE
+                    0
+                    NodeId
+                    seq_num
+                    sizeof(payload)
+                }
+
+                payload:
+                struct {
+                    lock_id
+                    NodeId  //the lock owner is me
+                }
+
+                use mprotect to modify the pagetable (not PageTable) 
+
+                recv msg:
+                head struct...
+                ACK (see in protocol.h)
+
+                return 
+            */
+        
             
             return 0;
         }

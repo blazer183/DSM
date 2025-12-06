@@ -4,10 +4,14 @@ github copilot: 你好！这是你本次任务的任务清单
 
 /docs/AICHITECTURE.md 系统介绍了目录架构，请你先阅读它，并了解报文规范。
 
-这里内容很多，不要急，你只需要实现/src/dsm_os.cpp里的dsm_init()函数的单元测试，也就是测试该函数是否可以正确实现功能。
+你的任务：实现DSM/src/os/dsm_os.cpp中的锁请求功能，伪代码我已经为你实现了 
 
-根目录下的dsm_test.cpp是测试程序，请你先修改launch.sh的编译指令，我希望通过launch.sh发起该程序后，（spmd) 各个节点的日志都可以正确返回。
+任务完成条件：在wsl环境下启动DSM/scripts/launcher.sh，分发test_dsm.cpp到多台虚拟机，能够正确返回测试日志，成功启动。 你在测试时需要修改launcher.sh里的IP成你的虚拟机IP，你需要建立多台虚拟机完成测试，测试截图放在README最后。你要解决编译时错误，修改部分源代码和补全监听线程部分。祝你好运！
 
-TIPS: 你可能需要创建多台虚拟机并进行测试。为了完成测试，你需要修改并完善src/concurrent/concurrent_daemon.cpp文件的内容，在该文件中，你只需要实现本次单元测试的部分，即简单实现join报文的功能，你可以参考旧实现，修改并成功完成测试。你需要收集全部进程消息，最后完成判定后再广播。如果发现dsm_os.cpp哪里有不完善的地方，也请你一并完善。
+Tips: 这里你对locktable的理解有偏差：locktable里写的是谁是这个锁的owner没问题，但是每当某个进程想获取锁，它不会查本地的locktable，而是先确定这个锁表的拥有者是谁，也就是probowner是谁，我是用哈希实现，即probowner = lock_id % ProcNum 从他那里查询realowner,获取realowner_id后向realowner发送消息，等到realowner回复后，再次向probowner发送消息更新锁表，同时根据realowner发送的invalide_set_count修改自己的页权限（mprotect修改）
+
+Tips: 监听线程的JOIN报文部分你不可以通过joined_fds.size()判断是否全部进程都加入连接，因为这里使用的是TCP长连接，你需要维护一个计数，并用一把锁保护它。每次在join时递增，如果不到ProcNum就返回，如果相等就进行广播。广播时再对joined_fds调用。
+
+Tips: 监听线程的LOCK_AQUIRE报文部分你需要处理多个进程争用锁的情况。你需要把“传递realowner_id-等待-收到owner_update报文”当成一个整体，只有这一轮结束才能把更改后的realowner返回给请求者；对于realowner的线程，需要先查看锁表的is_locked是否为真，只有为假时才可以传递锁权限。
 
 最后，good luck to you!
