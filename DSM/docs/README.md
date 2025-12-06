@@ -1,66 +1,13 @@
-# Distributed Shared Memory
+github copilot: 你好！这是你本次任务的任务清单
 
-����Ŀ��DSM��һ��СС��̽������djx��zrz����
+正如你所看见的，本次仓库为我的dsm中间件源代码，我需要你实现单元测试功能。也是软件工程必要一环
 
+/docs/AICHITECTURE.md 系统介绍了目录架构，请你先阅读它，并了解报文规范。
 
+这里内容很多，不要急，你只需要实现/src/dsm_os.cpp里的dsm_init()函数的单元测试，也就是测试该函数是否可以正确实现功能。
 
-����ʵ���ĵã�
+根目录下的dsm_test.cpp是测试程序，请你先修改launch.sh的编译指令，我希望通过launch.sh发起该程序后，（spmd) 各个节点的日志都可以正确返回。
 
-## 1.static and debug
+TIPS: 你可能需要创建多台虚拟机并进行测试。为了完成测试，你需要修改并完善src/concurrent/concurrent_daemon.cpp文件的内容，在该文件中，你只需要实现本次单元测试的部分，即简单实现join报文的功能，你可以参考旧实现，修改并成功完成测试。你需要收集全部进程消息，最后完成判定后再广播。如果发现dsm_os.cpp哪里有不完善的地方，也请你一并完善。
 
-�궨��static�ؼ���ʵ�ֵ�Ԫ����ʱ��debug
-
-```
-g++ -D<��(UNITEST)> src/os/A.cpp tests/unit/test_A.cpp -Iinclude -o test_A
-```
-
-```
-#ifdef UNITEST
-#define STATIC
-#else
-#define STATICI static
-#endif
-```
-
-## 2.extern C
-
-extern C��ϵͳͷ�ļ�����ж��壬ֻ��Ҫ���Զ���Ĵ�Cͷ�ļ��ﶨ��
-
-## 3.ssh���ܵ�¼
-
-1. ���ýű�
-
-init_ssh.shֻ��Ҫ����һ��������Ч��launcher.shÿ����Ŀ����Ҫ����һ��
-
-2. ����������
-
-```
-//��¼wsl��
-sudo apt install openssh-server -y
-//��װ
-sudo rm /etc/ssh/ssh_host_*
-sudo ssh-keygen -A
-//�Ƴ�ԭ�ȵ���Կ ��������Կ
-sudo nano /etc/ssh/sshd_config
-//��ѯ�����ļ������ļ���Ӧ�Ķ˿�������վ����Ĭ��22
-sudo service ssh restart
-sudo service ssh status
-//����ssh����֤״̬
-ip addr
-//��ѯ����IP
-
-
-//�ͻ��ˣ�
-./init_ssh.sh
-��������
-
-```
-
-## 4. dos2unix
-
-```
-sudo apt install dos2unix
-dos2unix A.sh
-```
-
-���ã���ͬ����ϵͳ���з�ת��
+最后，good luck to you!

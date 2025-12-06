@@ -12,10 +12,10 @@
 #define STATIC static
 #endif
 
-STATIC size_t g_region_pages;   // 管理区域的页面数
-STATIC size_t g_page_sz;        // 系统页面大小
-STATIC void* g_region;          // 受管理的内存区域起始地址
-STATIC struct sigaction g_prev_sa;  // 先前的 SIGSEGV 处理器
+STATIC size_t g_region_pages;   // number of pages in the managed region
+STATIC size_t g_page_sz;        // system page size
+STATIC void* g_region;          // start address of the managed memory region
+STATIC struct sigaction g_prev_sa;  // previous SIGSEGV handler
 
 STATIC void segv_handler(int signo, siginfo_t* info, void* uctx)
 {
@@ -30,15 +30,15 @@ STATIC void segv_handler(int signo, siginfo_t* info, void* uctx)
         return;
     }
 
-    const uintptr_t page_base = fault & ~(g_page_sz - 1);   //页基址
-    //报错声明
+    const uintptr_t page_base = fault & ~(g_page_sz - 1);   // page base address
+    // Log the fault
     std::cerr << "[handler] fault @ " << info->si_addr << " -> page "
               << reinterpret_cast<void*>(page_base) << '\n';
 
-    // TODO: 拉取远端页、刷新版本号等
+    // TODO: pull remote page, refresh version number, etc.
     //pull_remote_page(page_base);
 
-    // 恢复页面权限为读写
+    // Restore page permissions to read/write
     if (mprotect(reinterpret_cast<void*>(page_base), g_page_sz,
                  PROT_READ | PROT_WRITE) == -1) {
         perror("mprotect");
@@ -50,10 +50,10 @@ STATIC void segv_handler(int signo, siginfo_t* info, void* uctx)
 
 void install_handler(void* base_addr, size_t num_pages)
 {
-    g_page_sz = static_cast<size_t>(sysconf(_SC_PAGESIZE)); // 获取系统页面大小
+    g_page_sz = static_cast<size_t>(sysconf(_SC_PAGESIZE)); // get system page size
     g_region_pages = num_pages;
     if(base_addr == nullptr) {
-        base_addr = (void *)0x4000000000; // 默认基址
+        base_addr = (void *)0x4000000000; // default base address
     }
 
     g_region = mmap(base_addr, num_pages * g_page_sz, PROT_NONE,
@@ -63,7 +63,7 @@ void install_handler(void* base_addr, size_t num_pages)
         std::exit(1);
     }
 
-    // 设置信号专用栈
+    // Set up alternate signal stack
 
     stack_t alt{};
     alt.ss_sp = std::malloc(SIGSTKSZ);

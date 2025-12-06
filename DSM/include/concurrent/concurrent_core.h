@@ -15,7 +15,7 @@
 // [0x01] DSM_MSG_JOIN_REQ
 // 接收者：Manager (Leader)
 // 作用：记录新节点，分配ID，准备回复 ACK
-void process_join_req(int sock, const dsm_header_t& head, const payload_join_req_t& body);
+void process_join_req(int sock, const dsm_header_t& head);
 
 // [0x10] DSM_MSG_PAGE_REQ
 // 接收者：Manager 或 Owner
