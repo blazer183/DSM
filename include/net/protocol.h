@@ -70,7 +70,6 @@ typedef struct {
 
 
 
-
 // [DSM_MSG_PAGE_REQ] Requestor -> Manager
 typedef struct {
     uint32_t page_index;        // 请求的全局页号

@@ -63,4 +63,34 @@ sudo apt install dos2unix
 dos2unix A.sh
 ```
 
-作用：不同操作系统换行符转换
+作用：不同操作系统换行符转换，这里经常出现有文件但显示required file not found 的情况
+
+## 5.创建软链接
+
+```
+ln -s "/mnt/c/Users/20399/Desktop/DSM_test_generation" dsm
+```
+
+## 6.git小连招
+
+```
+git init
+git remote add origin http://......git
+
+git fetch
+git switch 分支名
+
+git pull	//只拉取本地分支的库并合并
+git reset --hard HEAD	//重置仓库指令
+
+git push origin --delete <分支名>	//删除分支
+git branch	//查看本地分支 -a 查看远端+本地分支
+
+git config --global credential.helper 'cache --timeout=36000'	//缓存10小时密码
+```
+
+适当听从建议：![image-20251205113815429](C:\Users\20399\AppData\Roaming\Typora\typora-user-images\image-20251205113815429.png)
+
+## 7.vscode速览代码
+
+F12跳转定义，Alt+<-是返回上一光标

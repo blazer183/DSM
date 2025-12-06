@@ -6,14 +6,11 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
-
 #ifdef UNITEST
 #define STATIC 
 #else
 #define STATIC static
 #endif
-
-
 
 STATIC size_t g_region_pages;   // 管理区域的页面数
 STATIC size_t g_page_sz;        // 系统页面大小
@@ -83,3 +80,6 @@ void install_handler(void* base_addr, size_t num_pages)
     }
 }
 
+void pull_remote_page(uintptr_t page_base){
+
+}
