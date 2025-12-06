@@ -40,8 +40,8 @@ ssize_t rio_readn(rio_t *rp, void *usrbuf, size_t n);
 typedef enum {
 <<<<<<< HEAD
     // 1. ï¿½ï¿½Ê¼ï¿½ï¿½ï¿½×¶ï¿½
-    DSM_MSG_JOIN_REQ      = 0x01,  // ï¿½Â½Úµï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ë£¬ï¿½ï¿½ÒªÍ³ï¿½Æ½Úµï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½IDï¿½ï¿½È·ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ö·
-    DSM_MSG_JOIN_ACK      = 0x02,  // Leaderï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ï¢(ID, ï¿½ï¿½Ö·)ï¿½ï¿½Ò²ï¿½ï¿½ï¿½Çºï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ø°ï¿½ï¿½ï¿½IDï¿½Í»ï¿½Ö·ï¿½ï¿½ï¿½ï¿½Ã¸ï¿½ï¿½Øµï¿½Ç°8ï¿½Ö½ï¿½ï¿½ï¿½IDï¿½ï¿½ï¿½ï¿½8ï¿½Ö½ï¿½ï¿½Ç»ï¿½Ö·ï¿½ï¿½Ä¬ï¿½Ï·ï¿½ï¿½ï¿½0x4000000000
+    DSM_MSG_JOIN_REQ      = 0x01,  // ï¿½Â½Úµï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ë£?ï¿½ï¿½ÒªÍ³ï¿½Æ½Úµï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½IDï¿½ï¿½È·ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ö·
+    DSM_MSG_JOIN_ACK      = 0x02,  // Leaderï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ï¢(ID, ï¿½ï¿½Ö·)ï¿½ï¿½Ò²ï¿½ï¿½ï¿½Çºï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ø°ï¿½ï¿½ï¿½IDï¿½Í»ï¿½Ö·ï¿½ï¿½ï¿½ï¿½Ã¸ï¿½ï¿½Øµï¿½Ç?8ï¿½Ö½ï¿½ï¿½ï¿½IDï¿½ï¿½ï¿½ï¿½8ï¿½Ö½ï¿½ï¿½Ç»ï¿½Ö·ï¿½ï¿½Ä¬ï¿½Ï·ï¿½ï¿½ï¿½0x4000000000
 =======
     // 1. ³õÊ¼»¯½×¶Î
     DSM_MSG_JOIN_REQ      = 0x01,  // 
@@ -58,7 +58,7 @@ typedef enum {
     DSM_MSG_LOCK_REP      = 0x21,  // Í¬ï¿½ï¿½
     
     // 4. Î¬ï¿½ï¿½ï¿½ï¿½È·ï¿½ï¿½
-    DSM_MSG_OWNER_UPDATE  = 0x30,  // ï¿½ï¿½ÖªManagerï¿½ï¿½ï¿½ï¿½È¨ï¿½Ñ±ï¿½ï¿½ï¿½ï¿½Í¨ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Î»ï¿½ï¿½ï¿½ï¿½Ò³/ï¿½ï¿½
+    DSM_MSG_OWNER_UPDATE  = 0x30,  // ï¿½ï¿½ÖªManagerï¿½ï¿½ï¿½ï¿½È¨ï¿½Ñ±ï¿½ï¿½ï¿½ï¿½Í?ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Î»ï¿½ï¿½ï¿½ï¿½Ò³/ï¿½ï¿½
     DSM_MSG_ACK           = 0xFF   // Í¨ï¿½ï¿½È·ï¿½ï¿½ (ï¿½ï¿½ï¿½ï¿½Í¬ï¿½ï¿½)
 } dsm_msg_type_t;
 
@@ -72,11 +72,6 @@ typedef struct {
 } __attribute__((packed)) dsm_header_t;
 
 
-<<<<<<< HEAD
-// [DSM_MSG_JOIN_REQ]
-typedef struct {
-    uint16_t listen_port;    // ï¿½ï¿½ï¿½ï¿½ Leader ï¿½ï¿½ï¿½ï¿½ï¿½Ä¸ï¿½ï¿½Ë¿Ú¼ï¿½ï¿½ï¿½
-=======
 
 
 
@@ -89,29 +84,22 @@ typedef struct {
 // ¸ºÔØ£ºÍ¨³£Îª¿Õ£¬»òÕßÊÇ×ÔÉíµÄ¼àÌý¶Ë¿Ú
 typedef struct {
     uint16_t listen_port;    // ¸æËß Leader ÎÒÔÚÄÄ¸ö¶Ë¿ÚÌý
->>>>>>> trunk
 } __attribute__((packed)) payload_join_req_t;
 
 
 // [DSM_MSG_JOIN_ACK]
 typedef struct {
-<<<<<<< HEAD
-    uint16_t assigned_node_id;  // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ëµï¿½ ID
-    uint16_t node_count;        // ï¿½Ü½Úµï¿½ï¿½ï¿½ (ï¿½ï¿½ï¿½ï¿½ Hash ï¿½ï¿½ï¿½ï¿½)
-    uint64_t dsm_mem_size;      // ï¿½ï¿½ï¿½ï¿½ï¿½Ú´ï¿½ï¿½Ü´ï¿½Ð¡
-=======
     uint16_t assigned_node_id;  // ·ÖÅä¸øÐÂÈËµÄ ID
     uint16_t node_count;        // ×Ü½ÚµãÊý (ÓÃÓÚ Hash ¼ÆËã)
     
->>>>>>> trunk
 } __attribute__((packed)) payload_join_ack_t;
 
 
-// ---------------- B. Ò³ï¿½ï¿½ï¿½ï¿½ï¿½Ä£ï¿½ï¿½ ----------------
+// ---------------- B. Ò³ï¿½ï¿½ï¿½ï¿½ï¿½Ä£ï¿½ï¿? ----------------
 
 // [DSM_MSG_PAGE_REQ] Requestor -> Manager
 typedef struct {
-    uint32_t page_index;        // ï¿½ï¿½ï¿½ï¿½ï¿½È«ï¿½ï¿½Ò³ï¿½ï¿½
+    uint32_t page_index;        // ï¿½ï¿½ï¿½ï¿½ï¿½È?ï¿½ï¿½Ò³ï¿½ï¿½
 } __attribute__((packed)) payload_page_req_t;
 
 // [DSM_MSG_PAGE_REP] Manager -> RealOwner
@@ -122,8 +110,8 @@ typedef struct {
 } __attribute__((packed)) payload_page_rep_t;
 
 // [DSM_MSG_PAGE_DATA] RealOwner -> Requestor
-// ï¿½ï¿½ï¿½ï¿½ï¿½Í¨ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Òª struct ï¿½ï¿½ï¿½å£¬Ö±ï¿½ï¿½ Header + 4096ï¿½Ö½ï¿½ï¿½ï¿½ï¿½ï¿½
-// ï¿½ï¿½ï¿½ï¿½ï¿½ÒªÔªï¿½ï¿½ï¿½Ý£ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ unused ï¿½Ö¶ï¿½
+// ï¿½ï¿½ï¿½ï¿½ï¿½Í?ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Òª struct ï¿½ï¿½ï¿½å£¬Ö±ï¿½ï¿½ Header + 4096ï¿½Ö½ï¿½ï¿½ï¿½ï¿½ï¿½
+// ï¿½ï¿½ï¿½ï¿½ï¿½Ò?Ôªï¿½ï¿½ï¿½Ý£ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ unused ï¿½Ö¶ï¿½
 
 
 // ---------------- C. ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ä£ï¿½ï¿½ ----------------
@@ -137,7 +125,7 @@ typedef struct {
 typedef struct {
     uint32_t lock_id;
     uint32_t invalid_set_count; // Scope Consistency: ï¿½ï¿½ÒªÊ§Ð§ï¿½ï¿½Ò³ï¿½ï¿½ï¿½ï¿½
-    // ï¿½ï¿½ï¿½ï¿½ï¿½Åºï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ invalid_set ï¿½Ð±ï¿½
+    // ï¿½ï¿½ï¿½ï¿½ï¿½Åºï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿? invalid_set ï¿½Ð±ï¿½
     uint32_t realowner;
 
 } __attribute__((packed)) payload_lock_rep_t;
@@ -153,7 +141,7 @@ typedef struct {
 
 // [DSM_MSG_ACK]
 typedef struct {
-    uint32_t target_seq;     // È·ï¿½ï¿½ï¿½Ç¶ï¿½ï¿½Ä¸ï¿½ï¿½ï¿½ï¿½ï¿½Ä»ï¿½Ó¦
+    uint32_t target_seq;     // È·ï¿½ï¿½ï¿½Ç¶ï¿½ï¿½Ä¸ï¿½ï¿½ï¿½ï¿½ï¿½Ä»ï¿½Ó?
     uint8_t  status;         // 0=OK, 1=Fail
 } __attribute__((packed)) payload_ack_t;
 
