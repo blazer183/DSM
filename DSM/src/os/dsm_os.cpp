@@ -267,100 +267,135 @@ int dsm_mutex_destroy(int *mutex){
 }
 
 int dsm_mutex_lock(int *mutex){
-    if (mutex == nullptr || SocketTable == nullptr)
+    if (mutex == nullptr || SocketTable == nullptr || LockTable == nullptr)
         return -1;
 
     const int lockid = *mutex;
-    const int lockprobowner = lockid % ProcNum;
-
-    bool has_connection = false;
-    SocketTable->LockAcquire();
-    has_connection = (SocketTable->Find(lockprobowner) != nullptr);
-    SocketTable->LockRelease();
-
-    if (!has_connection) {
-        // Establish connection to lock probowner
-        std::string lockprobownerIP = GetPodIp(lockprobowner);
-        int lockprotownerPort = GetPodPort(lockprobowner);
-        int sock = ::socket(AF_INET, SOCK_STREAM, 0);
-        if (sock < 0) return -1;
-        sockaddr_in addr{};
-        addr.sin_family = AF_INET;
-        addr.sin_port = htons(lockprotownerPort);
-        if (::inet_pton(AF_INET, lockprobownerIP.c_str(), &addr.sin_addr) <= 0) {
-            ::close(sock);
-            return -1;
-        }
-        if (::connect(sock, (sockaddr*)&addr, sizeof(addr)) < 0) {
-            ::close(sock);
-            return -1;
-        }
-        SocketTable->LockAcquire();
-        SocketTable->Insert(lockprobowner, SocketRecord{sock});
-        SocketTable->LockRelease();
+    
+    // Check if lock is already acquired locally
+    LockTable->LockAcquire();
+    auto record = LockTable->Find(lockid);
+    if (record != nullptr && record->locked && record->owner_id == NodeId) {
+        // Already acquired by this node
+        LockTable->LockRelease();
+        return 0;
     }
-    // TODO: Full lock acquisition protocol implementation
+    LockTable->LockRelease();
+    
+    // Determine the probable owner of the lock
+    int lockprobowner = lockid % ProcNum;
+    
+    // Keep trying until we get the lock
+    while (true) {
+        // Ensure we have a connection to the probable owner
+        bool has_connection = false;
+        SocketTable->LockAcquire();
+        has_connection = (SocketTable->Find(lockprobowner) != nullptr);
+        SocketTable->LockRelease();
 
-    /*
-        pesudocode:
-        LockTable->LockAcquire();
-        check if lock is already acquired locally
-        if aquired:
+        if (!has_connection) {
+            // Establish connection to lock probowner
+            std::string lockprobownerIP = GetPodIp(lockprobowner);
+            int lockprotownerPort = GetPodPort(lockprobowner);
+            int sock = ::socket(AF_INET, SOCK_STREAM, 0);
+            if (sock < 0) return -1;
+            sockaddr_in addr{};
+            addr.sin_family = AF_INET;
+            addr.sin_port = htons(lockprotownerPort);
+            if (::inet_pton(AF_INET, lockprobownerIP.c_str(), &addr.sin_addr) <= 0) {
+                ::close(sock);
+                return -1;
+            }
+            if (::connect(sock, (sockaddr*)&addr, sizeof(addr)) < 0) {
+                ::close(sock);
+                return -1;
+            }
+            SocketTable->LockAcquire();
+            SocketTable->Insert(lockprobowner, SocketRecord{sock});
+            SocketTable->LockRelease();
+        }
+        
+        // Get socket and sequence number
+        SocketTable->LockAcquire();
+        auto socket_record = SocketTable->Find(lockprobowner);
+        if (socket_record == nullptr) {
+            SocketTable->LockRelease();
+            return -1;
+        }
+        int sock = socket_record->socket;
+        uint32_t seq_num = socket_record->allocate_seq();
+        SocketTable->LockRelease();
+        
+        // Send LOCK_ACQ request
+        dsm_header_t req_header = {
+            DSM_MSG_LOCK_ACQ,
+            0,
+            static_cast<uint16_t>(htons(NodeId)),
+            htonl(seq_num),
+            htonl(sizeof(payload_lock_req_t))
+        };
+        
+        payload_lock_req_t req_payload = {
+            htonl(lockid)
+        };
+        
+        if (::send(sock, &req_header, sizeof(req_header), 0) != sizeof(req_header)) {
+            return -1;
+        }
+        if (::send(sock, &req_payload, sizeof(req_payload), 0) != sizeof(req_payload)) {
+            return -1;
+        }
+        
+        // Receive LOCK_REP response
+        rio_t rio;
+        rio_readinit(&rio, sock);
+        
+        dsm_header_t rep_header;
+        if (rio_readn(&rio, &rep_header, sizeof(rep_header)) != sizeof(rep_header)) {
+            return -1;
+        }
+        
+        // Check if this is the real owner (unused bit = 1) or redirect (unused bit = 0)
+        if (rep_header.unused == 0) {
+            // Redirect: need to contact the real owner
+            payload_lock_rep_t rep_payload;
+            if (rio_readn(&rio, &rep_payload, sizeof(rep_payload)) != sizeof(rep_payload)) {
+                return -1;
+            }
+            int new_owner = ntohl(rep_payload.realowner);
+            
+            // If redirected to the same node, the lock is currently held, wait a bit
+            if (new_owner == lockprobowner) {
+                std::cout << "[DSM Lock] Lock " << lockid << " is held, waiting..." << std::endl;
+                ::usleep(100000);  // Sleep for 100ms before retrying
+            }
+            
+            lockprobowner = new_owner;
+            // Loop back to try with the real owner
+            continue;
+        } else {
+            // Successfully acquired the lock
+            payload_lock_rep_t rep_payload;
+            if (rio_readn(&rio, &rep_payload, sizeof(rep_payload)) != sizeof(rep_payload)) {
+                return -1;
+            }
+            
+            // Update lock table
+            LockTable->LockAcquire();
+            auto lock_rec = LockTable->Find(lockid);
+            if (lock_rec == nullptr) {
+                LockTable->Insert(lockid, LockRecord(NodeId));
+            } else {
+                lock_rec->locked = true;
+                lock_rec->owner_id = NodeId;
+                LockTable->Update(lockid, *lock_rec);
+            }
             LockTable->LockRelease();
+            
             return 0;
-        else:
-            probowner_id = hash(lock_id)
-            use socket table. find (probowner_id)
-            send:
-            struct {
-                DSM_MSG_LOCK_ACQ
-                0/1
-                PodId
-                seq_num
-                sizeof(payload)
-            }
-
-            payload:
-            struct {
-                lock_id	
-            }
-            
-            
-            recv:(blocked)
-            msg_head, typically :
-
-            struct {
-                DSM_MSG_LOCK_REP 
-                1/0				
-                //if the lock is in probowner, the unused bit is ture(1) and the payload that returned includes the list of invalid/dirty pages; 
-                //which is the union of: the pages that is modified by last lock aquirer AND the invalid pages that inherited from the more previous owner
-                // if is not, the unused bit is false(0) and the payload returned the realowner_id, with invalid_set_count be zero.
-                PodId
-                seq_num
-                sizeof(payload)
-            }
-
-            payload 
-            struct {
-                invalid_set_count;	    //如果不是0，则还有后续负载
-                realowner					//realowner字段 			
-            }
-            an array that in size equal to invalid_set_count
-
-
-            check the unused  bit:
-            if is zero:
-                do the same thing as above: detect socket and transmit requirement
-            if is one:
-                //well, it will ultimately be one~
-                get the invalid_set_count and modify the pagetable(from system call, not the pagetable we self defined(that is to store the owner))
-                note the islocked as 1
-                release locktable lock
-                return 0
-
-
-            
-    */
+        }
+    }
+    
     return 0;
 }
 
