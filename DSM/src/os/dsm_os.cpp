@@ -409,75 +409,98 @@ int dsm_mutex_lock(int *mutex){
             // Calculate probowner for this lock
             int probowner_id = lockid % ProcNum;
             
-            // Get probowner's socket to send OWNER_UPDATE
-            SocketTable->LockAcquire();
-            auto probowner_socket_rec = SocketTable->Find(probowner_id);
-            if (probowner_socket_rec == nullptr) {
+            // Only send OWNER_UPDATE if we're not communicating with the probowner
+            // (i.e., if lockprobowner != probowner_id, meaning we got redirected to real owner)
+            // When we talk to probowner directly and get the lock, we don't need to update
+            if (lockprobowner != probowner_id) {
+                // We need to inform the probowner about the ownership change
+                // Get probowner's socket to send OWNER_UPDATE
+                SocketTable->LockAcquire();
+                auto probowner_socket_rec = SocketTable->Find(probowner_id);
+                if (probowner_socket_rec == nullptr) {
+                    SocketTable->LockRelease();
+                    // Try to establish connection to probowner
+                    std::string probownerIP = GetPodIp(probowner_id);
+                    int probownerPort = GetPodPort(probowner_id);
+                    int prob_sock = ::socket(AF_INET, SOCK_STREAM, 0);
+                    if (prob_sock < 0) return -1;
+                    sockaddr_in addr{};
+                    addr.sin_family = AF_INET;
+                    addr.sin_port = htons(probownerPort);
+                    if (::inet_pton(AF_INET, probownerIP.c_str(), &addr.sin_addr) <= 0) {
+                        ::close(prob_sock);
+                        return -1;
+                    }
+                    if (::connect(prob_sock, (sockaddr*)&addr, sizeof(addr)) < 0) {
+                        ::close(prob_sock);
+                        return -1;
+                    }
+                    SocketTable->LockAcquire();
+                    SocketTable->Insert(probowner_id, SocketRecord{prob_sock});
+                    probowner_socket_rec = SocketTable->Find(probowner_id);
+                }
+                
+                int probowner_sock = probowner_socket_rec->socket;
+                uint32_t update_seq = probowner_socket_rec->allocate_seq();
                 SocketTable->LockRelease();
-                return -1;
-            }
-            int probowner_sock = probowner_socket_rec->socket;
-            uint32_t update_seq = probowner_socket_rec->allocate_seq();
-            SocketTable->LockRelease();
-            
-            // Send OWNER_UPDATE message to probowner
-            dsm_header_t update_header = {
-                DSM_MSG_OWNER_UPDATE,
-                0,  // unused bit = 0 indicates lock table update (not page table)
-                static_cast<uint16_t>(htons(NodeId)),
-                htonl(update_seq),
-                htonl(sizeof(payload_owner_update_t))
-            };
-            
-            payload_owner_update_t update_payload = {
-                htonl(lockid),
-                htons(NodeId)  // New owner is this node
-            };
-            
-            if (::send(probowner_sock, &update_header, sizeof(update_header), 0) != sizeof(update_header)) {
-                return -1;
-            }
-            if (::send(probowner_sock, &update_payload, sizeof(update_payload), 0) != sizeof(update_payload)) {
-                return -1;
-            }
-            
-            // Receive ACK
-            rio_t ack_rio;
-            rio_readinit(&ack_rio, probowner_sock);
-            
-            dsm_header_t ack_header;
-            if (rio_readn(&ack_rio, &ack_header, sizeof(ack_header)) != sizeof(ack_header)) {
-                return -1;
-            }
-            
-            if (ack_header.type == DSM_MSG_ACK) {
-                payload_ack_t ack_payload;
-                if (rio_readn(&ack_rio, &ack_payload, sizeof(ack_payload)) != sizeof(ack_payload)) {
+                
+                // Send OWNER_UPDATE message to probowner
+                dsm_header_t update_header = {
+                    DSM_MSG_OWNER_UPDATE,
+                    0,  // unused bit = 0 indicates lock table update (not page table)
+                    static_cast<uint16_t>(htons(NodeId)),
+                    htonl(update_seq),
+                    htonl(sizeof(payload_owner_update_t))
+                };
+                
+                payload_owner_update_t update_payload = {
+                    htonl(lockid),
+                    htons(NodeId)  // New owner is this node
+                };
+                
+                if (::send(probowner_sock, &update_header, sizeof(update_header), 0) != sizeof(update_header)) {
+                    return -1;
+                }
+                if (::send(probowner_sock, &update_payload, sizeof(update_payload), 0) != sizeof(update_payload)) {
                     return -1;
                 }
                 
-                if (ack_payload.status == 0) {
-                    // Update local lock table
-                    LockTable->LockAcquire();
-                    auto local_rec = LockTable->Find(lockid);
-                    if (local_rec != nullptr) {
-                        local_rec->locked = true;
-                        local_rec->owner_id = NodeId;
-                        LockTable->Update(lockid, *local_rec);
-                    } else {
-                        // Insert new record if not exists
-                        LockTable->Insert(lockid, LockRecord(NodeId));
-                    }
-                    LockTable->LockRelease();
-                    
-                    std::cout << "[DSM Lock] Successfully acquired lock " << lockid << std::endl;
-                    return 0;
-                } else {
-                    std::cerr << "[DSM Lock] ACK status failed for lock " << lockid << std::endl;
+                // Receive ACK
+                rio_t ack_rio;
+                rio_readinit(&ack_rio, probowner_sock);
+                
+                dsm_header_t ack_header;
+                if (rio_readn(&ack_rio, &ack_header, sizeof(ack_header)) != sizeof(ack_header)) {
                     return -1;
+                }
+                
+                if (ack_header.type == DSM_MSG_ACK) {
+                    payload_ack_t ack_payload;
+                    if (rio_readn(&ack_rio, &ack_payload, sizeof(ack_payload)) != sizeof(ack_payload)) {
+                        return -1;
+                    }
+                    
+                    if (ack_payload.status != 0) {
+                        std::cerr << "[DSM Lock] ACK status failed for lock " << lockid << std::endl;
+                        return -1;
+                    }
                 }
             }
             
+            // Update local lock table
+            LockTable->LockAcquire();
+            auto local_rec = LockTable->Find(lockid);
+            if (local_rec != nullptr) {
+                local_rec->locked = true;
+                local_rec->owner_id = NodeId;
+                LockTable->Update(lockid, *local_rec);
+            } else {
+                // Insert new record if not exists
+                LockTable->Insert(lockid, LockRecord(NodeId));
+            }
+            LockTable->LockRelease();
+            
+            std::cout << "[DSM Lock] Successfully acquired lock " << lockid << std::endl;
             return 0;
         }
     }
