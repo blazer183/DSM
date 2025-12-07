@@ -128,9 +128,9 @@ static bool handle_lock_acquire(int connfd, const dsm_header_t &header, rio_t &r
     }
 
     // Try to acquire the pthread mutex for this lock (non-blocking)
-    int trylock_result = pthread_mutex_trylock(&record->lock_id);
+    int trylock_error = pthread_mutex_trylock(&record->lock_id);
     
-    if (trylock_result != 0) {
+    if (trylock_error != 0) {
         // Lock is currently held by another thread/request
         std::cout << "[DSM Daemon] Lock " << lock_id << " is currently held by NodeId=" 
                   << record->owner_id << ", requester must wait" << std::endl;
@@ -187,8 +187,12 @@ static bool handle_lock_acquire(int connfd, const dsm_header_t &header, rio_t &r
 
     if (::send(connfd, &rep_header, sizeof(rep_header), 0) != sizeof(rep_header)) {
         std::cerr << "[DSM Daemon] Failed to send LOCK_REP header" << std::endl;
+        // Unlock the mutex before returning
         LockTable->LockAcquire();
-        pthread_mutex_unlock(&record->lock_id);
+        LockRecord* rec = LockTable->Find(lock_id);
+        if (rec != nullptr) {
+            pthread_mutex_unlock(&rec->lock_id);
+        }
         LockTable->LockRelease();
         return false;
     }
@@ -197,8 +201,12 @@ static bool handle_lock_acquire(int connfd, const dsm_header_t &header, rio_t &r
     uint32_t invalid_count_net = htonl(invalid_count);
     if (::send(connfd, &invalid_count_net, sizeof(invalid_count_net), 0) != sizeof(invalid_count_net)) {
         std::cerr << "[DSM Daemon] Failed to send invalid_set_count" << std::endl;
+        // Unlock the mutex before returning
         LockTable->LockAcquire();
-        pthread_mutex_unlock(&record->lock_id);
+        LockRecord* rec = LockTable->Find(lock_id);
+        if (rec != nullptr) {
+            pthread_mutex_unlock(&rec->lock_id);
+        }
         LockTable->LockRelease();
         return false;
     }
@@ -208,8 +216,12 @@ static bool handle_lock_acquire(int connfd, const dsm_header_t &header, rio_t &r
         uint32_t page_idx_net = htonl(page_idx);
         if (::send(connfd, &page_idx_net, sizeof(page_idx_net), 0) != sizeof(page_idx_net)) {
             std::cerr << "[DSM Daemon] Failed to send invalid page index" << std::endl;
+            // Unlock the mutex before returning
             LockTable->LockAcquire();
-            pthread_mutex_unlock(&record->lock_id);
+            LockRecord* rec = LockTable->Find(lock_id);
+            if (rec != nullptr) {
+                pthread_mutex_unlock(&rec->lock_id);
+            }
             LockTable->LockRelease();
             return false;
         }

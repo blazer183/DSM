@@ -423,7 +423,7 @@ int dsm_mutex_lock(int *mutex){
                 // Mark pages as invalid
                 for (uint32_t i = 0; i < invalid_count; i++) {
                     uint32_t page_idx = ntohl(invalid_pages[i]);
-                    if (page_idx < SharedPages) {
+                    if (page_idx < (uint32_t)SharedPages) {
                         InvalidPages[page_idx] = 1;
                     }
                 }
@@ -435,7 +435,7 @@ int dsm_mutex_lock(int *mutex){
         // Lock is held by another node, retry after a short delay
         std::cerr << "[dsm_mutex_lock] Lock " << lockid << " is held by another node, retrying..." << std::endl;
         usleep(100000);  // Wait 100ms before retry
-        return dsm_mutex_lock(mutex);  // Retry
+        return dsm_mutex_lock(mutex);  // Retry (TODO: add max retry count to prevent infinite recursion)
     }
 
     std::cerr << "[dsm_mutex_lock] Unexpected response type: " << (int)rep_header.type << std::endl;
@@ -473,7 +473,7 @@ int dsm_mutex_unlock(int *mutex){
     if (InvalidPages != nullptr) {
         for (size_t i = 0; i < SharedPages; i++) {
             if (InvalidPages[i] == 1) {
-                invalid_pages.push_back(i);
+                invalid_pages.push_back((uint32_t)i);  // Explicit cast
                 InvalidPages[i] = 0;  // Reset after collecting
             }
         }
