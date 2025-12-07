@@ -23,9 +23,171 @@ bool barrier_ready = false;            // Whether all processes have joined
 int joined_count = 0;                  // Counter for joined processes (protected by join_mutex)
 
 
-// Handle client connection processing thread
-// Parameter connfd: the connected socket returned by accept(), the only communication channel with the client
-// Note: The listen_port in the payload is the client's daemon listening port, not used for connection
+// Forward declarations for message handlers
+static bool handle_join_request(int connfd, const dsm_header_t &header);
+static bool handle_lock_acquire(int connfd, const dsm_header_t &header, rio_t &rp);
+static bool handle_owner_update(int connfd, const dsm_header_t &header, rio_t &rp);
+static bool handle_unknown_message(int connfd, const dsm_header_t &header);
+
+
+static bool handle_join_request(int connfd, const dsm_header_t &header) {
+    (void)connfd; // Unused, kept for consistent signature
+
+    std::cout << "[DSM Daemon] Received JOIN_REQ: NodeId=" << ntohs(header.src_node_id) << std::endl;
+
+    bool should_broadcast = false;
+    {
+        std::lock_guard<std::mutex> lock(join_mutex);
+
+        joined_fds.push_back(connfd);
+        joined_count++;
+
+        std::cout << "[DSM Daemon] Currently connected: " << joined_count
+                  << " / " << ProcNum << std::endl;
+
+        if (joined_count == ProcNum && !barrier_ready) {
+            barrier_ready = true;
+            should_broadcast = true;
+        }
+    }
+
+    if (should_broadcast) {
+        std::cout << "[DSM Daemon] All processes ready, broadcasting JOIN_ACK..." << std::endl;
+
+        dsm_header_t ack_header{};
+        ack_header.type = DSM_MSG_JOIN_ACK;
+        ack_header.payload_len = 0;
+        ack_header.src_node_id = htons(NodeId);
+        ack_header.seq_num = 0;
+        ack_header.unused = 0;
+
+        std::lock_guard<std::mutex> lock(join_mutex);
+        for (int fd : joined_fds) {
+            ssize_t nw = write(fd, &ack_header, sizeof(dsm_header_t));
+            if (nw != sizeof(dsm_header_t)) {
+                std::cerr << "[DSM Daemon] Failed to send JOIN_ACK to fd=" << fd << std::endl;
+            } else {
+                std::cout << "[DSM Daemon] Sent JOIN_ACK to fd=" << fd << std::endl;
+            }
+        }
+
+        std::cout << "[DSM Daemon] Barrier synchronization complete!" << std::endl;
+    }
+
+    return true;
+}
+
+static bool handle_lock_acquire(int connfd, const dsm_header_t &header, rio_t &rp) {
+    /*
+    这里把网络分布式锁调用转化为局部的线程锁调用
+    LockTable.Lock(lock_id);    //获取原子锁
+    LockTable.LockAquire(); //获取全局锁
+    send:
+        struct {
+        DSM_MSG_LOCK_REP 
+        1				//！！！
+        PodId
+        seq_num
+        sizeof(payload)
+    }
+
+    payload 
+    // [DSM_MSG_LOCK_REP] Manager -> Requestor (授予锁)
+    typedef struct {
+        uint32_t invalid_set_count; 
+        vector invalid_page_list;
+    } __attribute__((packed)) payload_lock_rep_t;
+
+    等待锁释放消息
+    rcv: LOCK RLS
+    rcv: payload
+
+    LockTable.Update(lock_id); //更新invalid page list
+    LockTable.LockRelease(); //释放全局锁
+    LockTable.Unlock(lock_id); //释放原子锁
+    return ;
+
+    */
+}
+
+static bool handle_owner_update(int connfd, const dsm_header_t &header, rio_t &rp) {
+    payload_owner_update_t update_payload{};
+    if (rio_readn(&rp, &update_payload, sizeof(update_payload)) != sizeof(update_payload)) {
+        std::cerr << "[DSM Daemon] Failed to read OWNER_UPDATE payload" << std::endl;
+        close(connfd);
+        return false;
+    }
+
+    uint32_t resource_id = ntohl(update_payload.resource_id);
+    uint16_t new_owner = ntohs(update_payload.new_owner_id);
+    uint16_t requester_id = ntohs(header.src_node_id);
+
+    if (header.unused == 0) {
+        std::cout << "[DSM Daemon] Received OWNER_UPDATE for lock " << resource_id
+                  << " from NodeId=" << requester_id << ", new owner=" << new_owner << std::endl;
+
+        LockTable->LockAcquire();
+        auto lock_rec = LockTable->Find(resource_id);
+        if (lock_rec != nullptr) {
+            lock_rec->owner_id = new_owner;
+            lock_rec->locked = true;
+            LockTable->Update(resource_id, *lock_rec);
+        } else {
+            LockTable->Insert(resource_id, LockRecord(new_owner));
+        }
+        LockTable->LockRelease();
+
+        std::cout << "[DSM Daemon] Updated lock " << resource_id
+                  << " owner to NodeId=" << new_owner << std::endl;
+    } else {
+        std::cout << "[DSM Daemon] Received OWNER_UPDATE for page " << resource_id
+                  << " from NodeId=" << requester_id << ", new owner=" << new_owner << std::endl;
+
+        PageTable->LockAcquire();
+        auto page_rec = PageTable->Find(resource_id);
+        if (page_rec != nullptr) {
+            page_rec->owner_id = new_owner;
+            PageTable->Update(resource_id, *page_rec);
+        }
+        PageTable->LockRelease();
+
+        std::cout << "[DSM Daemon] Updated page " << resource_id
+                  << " owner to NodeId=" << new_owner << std::endl;
+    }
+
+    dsm_header_t ack_header{};
+    ack_header.type = DSM_MSG_ACK;
+    ack_header.unused = 0;
+    ack_header.src_node_id = htons(NodeId);
+    ack_header.seq_num = header.seq_num;
+    ack_header.payload_len = htonl(sizeof(payload_ack_t));
+
+    payload_ack_t ack_payload{};
+    ack_payload.status = 0;
+
+    if (write(connfd, &ack_header, sizeof(ack_header)) != sizeof(ack_header)) {
+        std::cerr << "[DSM Daemon] Failed to send ACK header" << std::endl;
+        close(connfd);
+        return false;
+    }
+    if (write(connfd, &ack_payload, sizeof(ack_payload)) != sizeof(ack_payload)) {
+        std::cerr << "[DSM Daemon] Failed to send ACK payload" << std::endl;
+        close(connfd);
+        return false;
+    }
+
+    return true;
+}
+
+static bool handle_unknown_message(int connfd, const dsm_header_t &header) {
+    std::cerr << "[DSM Daemon] Received unknown message type: 0x"
+              << std::hex << static_cast<int>(header.type) << std::dec << std::endl;
+    close(connfd);
+    return false;
+}
+
+
+
 void peer_handler(int connfd) {
     rio_t rp;
     rio_readinit(&rp, connfd);
@@ -47,216 +209,23 @@ void peer_handler(int connfd) {
             return;
         }
 
-        // Handle different message types
-        if (header.type == DSM_MSG_JOIN_REQ) {
-            std::cout << "[DSM Daemon] Received JOIN_REQ: NodeId=" << ntohs(header.src_node_id) << std::endl; 
-
-            // Add connection to list (protected by mutex)
-            bool should_broadcast = false;
-            {
-                std::lock_guard<std::mutex> lock(join_mutex);
-                
-                joined_fds.push_back(connfd);
-                joined_count++;  // Increment the counter
-                
-                std::cout << "[DSM Daemon] Currently connected: " << joined_count 
-                          << " / " << ProcNum << std::endl;
-
-                // Check if all processes have connected
-                // Note: ProcNum is the total number of processes including leader
-                // Each process (including leader) will call dsm_barrier() which sends JOIN_REQ
-                if (joined_count == ProcNum && !barrier_ready) {
-                    barrier_ready = true;
-                    should_broadcast = true;
-                }
-            }
-
-            // If all processes have joined, broadcast ACK to all
-            if (should_broadcast) {
-                std::cout << "[DSM Daemon] All processes ready, broadcasting JOIN_ACK..." << std::endl;
-
-                dsm_header_t ack_header;
-                ack_header.type = DSM_MSG_JOIN_ACK;
-                ack_header.payload_len = 0;  // No payload
-                ack_header.src_node_id = htons(NodeId);  // Let client know who sent this
-                ack_header.seq_num = 0;
-                ack_header.unused = 0;
-
-                std::lock_guard<std::mutex> lock(join_mutex);
-                
-                // Send ACK to all processes
-                for (size_t i = 0; i < joined_fds.size(); i++) {
-                    int fd = joined_fds[i];
-                    ssize_t nw = write(fd, &ack_header, sizeof(dsm_header_t));
-                    if (nw != sizeof(dsm_header_t)) {
-                        std::cerr << "[DSM Daemon] Failed to send ACK to fd=" << fd << std::endl;
-                    } else {
-                        std::cout << "[DSM Daemon] Sent JOIN_ACK to fd=" << fd << std::endl;
-                    }
-                }
-
-                std::cout << "[DSM Daemon] Barrier synchronization complete!" << std::endl;
-            }
-        } 
-        else if (header.type == DSM_MSG_LOCK_ACQ) {
-            // Read lock request payload
-            payload_lock_req_t req_payload;
-            if (rio_readn(&rp, &req_payload, sizeof(req_payload)) != sizeof(req_payload)) {
-                std::cerr << "[DSM Daemon] Failed to read LOCK_ACQ payload" << std::endl;
-                close(connfd);
-                return;
-            }
-
-            uint32_t lockid = ntohl(req_payload.lock_id);
-            uint16_t requester_id = ntohs(header.src_node_id);
-            
-            std::cout << "[DSM Daemon] Received LOCK_ACQ: lockid=" << lockid 
-                      << " from NodeId=" << requester_id << std::endl;
-
-            // Check if we own this lock
-            LockTable->LockAcquire();
-            auto lock_rec = LockTable->Find(lockid);
-            
-            dsm_header_t rep_header;
-            rep_header.type = DSM_MSG_LOCK_REP;
-            rep_header.src_node_id = htons(NodeId);
-            rep_header.seq_num = header.seq_num;
-            rep_header.payload_len = htonl(sizeof(payload_lock_rep_t));
-
-            payload_lock_rep_t rep_payload;
-            rep_payload.invalid_set_count = 0;
-            
-            if (lock_rec == nullptr) {
-                // We don't have this lock, create it and give it to requester
-                LockTable->Insert(lockid, LockRecord(requester_id));
-                rep_header.unused = 1;  // We are granting the lock
-                rep_payload.realowner = htonl(static_cast<uint32_t>(-1));
-                
-                std::cout << "[DSM Daemon] Granting new lock " << lockid 
-                          << " to NodeId=" << requester_id << std::endl;
-            } 
-            else if (lock_rec->locked && lock_rec->owner_id != NodeId) {
-                // Lock is held by someone else (not us), redirect to real owner
-                rep_header.unused = 0;  // Redirect
-                rep_payload.realowner = htonl(lock_rec->owner_id);
-                
-                std::cout << "[DSM Daemon] Redirecting lock request for " << lockid 
-                          << " to real owner NodeId=" << lock_rec->owner_id << std::endl;
-            }
-            else if (lock_rec->locked && lock_rec->owner_id == NodeId) {
-                // We own this lock and it's still locked - requester must wait
-                // For simplicity, just keep the requester blocked until lock is released
-                // In a real implementation, we would queue this request
-                // For now, tell them to try again (redirect to ourselves)
-                rep_header.unused = 0;  // Still locked, cannot grant
-                rep_payload.realowner = htonl(NodeId);
-                
-                std::cout << "[DSM Daemon] Lock " << lockid 
-                          << " is currently held by us (NodeId=" << NodeId 
-                          << "), requester must wait" << std::endl;
-            }
-            else {
-                // Lock exists but not locked, grant it to requester
-                lock_rec->locked = true;
-                lock_rec->owner_id = requester_id;
-                LockTable->Update(lockid, *lock_rec);
-                rep_header.unused = 1;  // We are granting the lock
-                rep_payload.realowner = htonl(static_cast<uint32_t>(-1));
-                
-                std::cout << "[DSM Daemon] Granting existing lock " << lockid 
-                          << " to NodeId=" << requester_id << std::endl;
-            }
-            
-            LockTable->LockRelease();
-
-            // Send response
-            if (write(connfd, &rep_header, sizeof(rep_header)) != sizeof(rep_header)) {
-                std::cerr << "[DSM Daemon] Failed to send LOCK_REP header" << std::endl;
-                close(connfd);
-                return;
-            }
-            if (write(connfd, &rep_payload, sizeof(rep_payload)) != sizeof(rep_payload)) {
-                std::cerr << "[DSM Daemon] Failed to send LOCK_REP payload" << std::endl;
-                close(connfd);
-                return;
-            }
-        } 
-        else if (header.type == DSM_MSG_OWNER_UPDATE) {
-            // Handle lock/page owner update
-            payload_owner_update_t update_payload;
-            if (rio_readn(&rp, &update_payload, sizeof(update_payload)) != sizeof(update_payload)) {
-                std::cerr << "[DSM Daemon] Failed to read OWNER_UPDATE payload" << std::endl;
-                close(connfd);
-                return;
-            }
-            
-            uint32_t resource_id = ntohl(update_payload.resource_id);
-            uint16_t new_owner = ntohs(update_payload.new_owner_id);
-            uint16_t requester_id = ntohs(header.src_node_id);
-            
-            // Check if this is a lock table update (unused = 0) or page table update (unused = 1)
-            if (header.unused == 0) {
-                // Lock table update
-                std::cout << "[DSM Daemon] Received OWNER_UPDATE for lock " << resource_id 
-                          << " from NodeId=" << requester_id << ", new owner=" << new_owner << std::endl;
-                
-                LockTable->LockAcquire();
-                auto lock_rec = LockTable->Find(resource_id);
-                if (lock_rec != nullptr) {
-                    lock_rec->owner_id = new_owner;
-                    lock_rec->locked = true;
-                    LockTable->Update(resource_id, *lock_rec);
-                } else {
-                    // Insert new lock record
-                    LockTable->Insert(resource_id, LockRecord(new_owner));
-                }
-                LockTable->LockRelease();
-                
-                std::cout << "[DSM Daemon] Updated lock " << resource_id 
-                          << " owner to NodeId=" << new_owner << std::endl;
-            } else {
-                // Page table update (unused = 1)
-                std::cout << "[DSM Daemon] Received OWNER_UPDATE for page " << resource_id 
-                          << " from NodeId=" << requester_id << ", new owner=" << new_owner << std::endl;
-                
-                PageTable->LockAcquire();
-                auto page_rec = PageTable->Find(resource_id);
-                if (page_rec != nullptr) {
-                    page_rec->owner_id = new_owner;
-                    PageTable->Update(resource_id, *page_rec);
-                }
-                PageTable->LockRelease();
-                
-                std::cout << "[DSM Daemon] Updated page " << resource_id 
-                          << " owner to NodeId=" << new_owner << std::endl;
-            }
-            
-            // Send ACK
-            dsm_header_t ack_header;
-            ack_header.type = DSM_MSG_ACK;
-            ack_header.unused = 0;
-            ack_header.src_node_id = htons(NodeId);
-            ack_header.seq_num = header.seq_num;
-            ack_header.payload_len = htonl(sizeof(payload_ack_t));
-            
-            payload_ack_t ack_payload;
-            ack_payload.status = 0;  // OK
-            
-            if (write(connfd, &ack_header, sizeof(ack_header)) != sizeof(ack_header)) {
-                std::cerr << "[DSM Daemon] Failed to send ACK header" << std::endl;
-                close(connfd);
-                return;
-            }
-            if (write(connfd, &ack_payload, sizeof(ack_payload)) != sizeof(ack_payload)) {
-                std::cerr << "[DSM Daemon] Failed to send ACK payload" << std::endl;
-                close(connfd);
-                return;
-            }
+        bool keep_processing = true;
+        switch (header.type) {
+            case DSM_MSG_JOIN_REQ:
+                keep_processing = handle_join_request(connfd, header);
+                break;
+            case DSM_MSG_LOCK_ACQ:
+                keep_processing = handle_lock_acquire(connfd, header, rp);
+                break;
+            case DSM_MSG_OWNER_UPDATE:
+                keep_processing = handle_owner_update(connfd, header, rp);
+                break;
+            default:
+                keep_processing = handle_unknown_message(connfd, header);
+                break;
         }
-        else {
-            std::cerr << "[DSM Daemon] Received unknown message type: 0x" 
-                      << std::hex << (int)header.type << std::dec << std::endl;
-            close(connfd);
+
+        if (!keep_processing) {
             return;
         }
     }

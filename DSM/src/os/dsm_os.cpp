@@ -42,6 +42,7 @@ void *SharedAddrBase = nullptr;
 int ProcNum = 0;
 int WorkerNodeNum = 0;
 std::vector<std::string> WorkerNodeIps;  // worker IP list
+int* InvalidPages = nullptr;            //0: valid, 1: invalid
 
 STATIC std::string LeaderNodeIp;
 STATIC int LeaderNodePort = 0;
@@ -161,6 +162,8 @@ bool InitDataStructs(int dsm_memsize)
                     << " size " << total_size << ": " << std::strerror(errno) << std::endl;
             return false;
         }
+        ValidPages = new int[SharedPages];
+        std::memset(DirtyPages, 0, sizeof(int) * SharedPages);
         install_handler(SharedAddrBase, SharedPages);
     }else {
         std::cerr << "[dsm] invalid shared region parameters (base=" << SharedAddrBase 
@@ -192,22 +195,12 @@ bool dsm_barrier()
     std::string target_ip = LeaderNodeIp;
 
     // Connect to leader node for synchronization
-    int leader_sock = LeaderNodeSocket;
-    if (leader_sock == -1) {
-        leader_sock = ::socket(AF_INET, SOCK_STREAM, 0);
-        if (leader_sock < 0) return false;
-        sockaddr_in addr{};
-        addr.sin_family = AF_INET;
-        addr.sin_port = htons(LeaderNodePort);
-        ::inet_pton(AF_INET, target_ip.c_str(), &addr.sin_addr); 
-        if (::connect(leader_sock, (sockaddr*)&addr, sizeof(addr)) < 0) {
-            ::close(leader_sock);
-            return false;
-        }
-        LeaderNodeSocket = leader_sock;  // Cache the leader node socket for future use
+    int leader_sock = getsocket(LeaderNodeIp, LeaderNodePort);
+    if (leader_sock < 0) {
+        std::cerr << "[dsm_barrier] failed to connect to leader at "
+                  << LeaderNodeIp << ":" << LeaderNodePort << std::endl;
+        return false;
     }
-
-    
     dsm_header_t req = {
         DSM_MSG_JOIN_REQ,                    
         0,                       // unused
@@ -227,7 +220,7 @@ bool dsm_barrier()
     return true;
 }
 
-int dsm_init(int dsm_memsize)       //argc argv processing
+int dsm_init(int dsm_memsize)       
 {
     if (!FetchGlobalData(dsm_memsize))
         return -1;
@@ -274,258 +267,75 @@ int dsm_mutex_lock(int *mutex){
 
     const int lockid = *mutex;
     
-    // Check if lock is already acquired locally
-    LockTable->LockAcquire();
-    auto record = LockTable->Find(lockid);
-    if (record != nullptr && record->locked && record->owner_id == NodeId) {
-        // Already acquired by this node
-        record->locked = 1;
-        LockTable->LockRelease();
-        return 0;
-    }
-    LockTable->LockRelease();
-    
-    // Determine the probable owner of the lock
     int lockprobowner = lockid % ProcNum;
+
+    /*  
+        查询并建立socket，这里建议封装成函数调用，
+        比如getsocket(int NodeId, int NodePort) 函数内部判断如果已经存在socket就直接返回，如果不存在就建立连接。
+
+        socket = getsocket(lockprobowner, LeaderNodePort);
+        send:
+        struct {
+            DSM_MSG_LOCK_ACQ
+            0/1
+            PodId
+            seq_num
+            sizeof(payload)
+        }
+
+        payload:
+        struct {
+            lock_id	//uint32_t类型 锁ID
+        }
+
+        recv:
+        struct {
+            DSM_MSG_LOCK_REP 
+            1				//！！！
+            PodId
+            seq_num
+            sizeof(payload)
+        }
+
+        payload 
+        // [DSM_MSG_LOCK_REP] Manager -> Requestor (授予锁)
+        typedef struct {
+            uint32_t invalid_set_count; 
+            vector invalid_page_list;
+        } __attribute__((packed)) payload_lock_rep_t;
+
+        将全部共享区都设置为invalid(可以记录在锁获取期间修改了哪些页)
+        将vector invalid page list 全部copy到全局变量 InvalidPages [SharedPages], 用于记录哪些页无效.
+        
+        return ;
+
+    */
     
-    // Keep trying until we get the lock
-    while (true) {
-        // Ensure we have a connection to the probable owner
-        bool has_connection = false;
-        SocketTable->LockAcquire();
-        has_connection = (SocketTable->Find(lockprobowner) != nullptr);
-        SocketTable->LockRelease();
+}    
 
-        if (!has_connection) {
-            // Establish connection to lock probowner
-            std::string lockprobownerIP = GetPodIp(lockprobowner);
-            int lockprotownerPort = GetPodPort(lockprobowner);
-            int sock = ::socket(AF_INET, SOCK_STREAM, 0);
-            if (sock < 0) return -1;
-            sockaddr_in addr{};
-            addr.sin_family = AF_INET;
-            addr.sin_port = htons(lockprotownerPort);
-            if (::inet_pton(AF_INET, lockprobownerIP.c_str(), &addr.sin_addr) <= 0) {
-                ::close(sock);
-                return -1;
-            }
-            if (::connect(sock, (sockaddr*)&addr, sizeof(addr)) < 0) {
-                ::close(sock);
-                return -1;
-            }
-            SocketTable->LockAcquire();
-            SocketTable->Insert(lockprobowner, SocketRecord{sock});
-            SocketTable->LockRelease();
-        }
+int dsm_mutex_unlock(int *mutex){   
+    /*
         
-        // Get socket and sequence number
-        SocketTable->LockAcquire();
-        auto socket_record = SocketTable->Find(lockprobowner);
-        if (socket_record == nullptr) {
-            SocketTable->LockRelease();
-            return -1;
-        }
-        int sock = socket_record->socket;
-        uint32_t seq_num = socket_record->allocate_seq();
-        SocketTable->LockRelease();
+        socket = getsocket(probownerid, LeaderNodePort);
         
-        // Send LOCK_ACQ request
-        dsm_header_t req_header = {
-            DSM_MSG_LOCK_ACQ,
-            0,
-            static_cast<uint16_t>(htons(NodeId)),
-            htonl(seq_num),
-            htonl(sizeof(payload_lock_req_t))
-        };
-        
-        payload_lock_req_t req_payload = {
-            htonl(lockid)
-        };
-        
-        if (::send(sock, &req_header, sizeof(req_header), 0) != sizeof(req_header)) {
-            return -1;
-        }
-        if (::send(sock, &req_payload, sizeof(req_payload), 0) != sizeof(req_payload)) {
-            return -1;
-        }
-        
-        // Receive LOCK_REP response
-        rio_t rio;
-        rio_readinit(&rio, sock);
-        
-        dsm_header_t rep_header;
-        if (rio_readn(&rio, &rep_header, sizeof(rep_header)) != sizeof(rep_header)) {
-            return -1;
-        }
-        
-        // Check if this is the real owner (unused bit = 1) or redirect (unused bit = 0)
-        if (rep_header.unused == 0) {
-            // Redirect: need to contact the real owner
-            payload_lock_rep_t rep_payload;
-            if (rio_readn(&rio, &rep_payload, sizeof(rep_payload)) != sizeof(rep_payload)) {
-                return -1;
-            }
-            int new_owner = ntohl(rep_payload.realowner);
-            
-            // If redirected to the same node, the lock is currently held, wait a bit
-            if (new_owner == lockprobowner) {
-                std::cout << "[DSM Lock] Lock " << lockid << " is held, waiting..." << std::endl;
-                ::usleep(100000);  // Sleep for 100ms before retrying
-            }
-            
-            lockprobowner = new_owner;
-            // Loop back to try with the real owner
-            continue;
-        } else {
-            // Successfully acquired the lock
-            payload_lock_rep_t rep_payload;
-            if (rio_readn(&rio, &rep_payload, sizeof(rep_payload)) != sizeof(rep_payload)) {
-                return -1;
-            }
-            
-            uint32_t invalid_set_count = ntohl(rep_payload.invalid_set_count);
-            
-            // Handle page invalidation if needed
-            if (invalid_set_count > 0) {
-                std::vector<uint32_t> invalid_pages(invalid_set_count);
-                if (rio_readn(&rio, invalid_pages.data(), invalid_set_count * sizeof(uint32_t)) 
-                    != static_cast<ssize_t>(invalid_set_count * sizeof(uint32_t))) {
-                    return -1;
-                }
-                
-                // Use mprotect to modify page permissions for invalidated pages
-                for (uint32_t i = 0; i < invalid_set_count; i++) {
-                    uint32_t page_idx = ntohl(invalid_pages[i]);
-                    void* page_addr = static_cast<char*>(SharedAddrBase) + page_idx * DSM_PAGE_SIZE;
-                    
-                    // Remove write permissions (make page read-only or no access)
-                    if (::mprotect(page_addr, DSM_PAGE_SIZE, PROT_NONE) != 0) {
-                        std::cerr << "[DSM Lock] Failed to mprotect page " << page_idx 
-                                  << ": " << std::strerror(errno) << std::endl;
-                    }
-                }
-            }
-            
-            // Calculate probowner for this lock
-            int probowner_id = lockid % ProcNum;
-            
-            // Only send OWNER_UPDATE if we're not communicating with the probowner
-            // (i.e., if lockprobowner != probowner_id, meaning we got redirected to real owner)
-            // When we talk to probowner directly and get the lock, we don't need to update
-            if (lockprobowner != probowner_id) {
-                // We need to inform the probowner about the ownership change
-                // Get probowner's socket to send OWNER_UPDATE
-                int probowner_sock = -1;
-                uint32_t update_seq = 0;
-                
-                SocketTable->LockAcquire();
-                auto probowner_socket_rec = SocketTable->Find(probowner_id);
-                if (probowner_socket_rec == nullptr) {
-                    SocketTable->LockRelease();
-                    // Try to establish connection to probowner
-                    std::string probownerIP = GetPodIp(probowner_id);
-                    int probownerPort = GetPodPort(probowner_id);
-                    int prob_sock = ::socket(AF_INET, SOCK_STREAM, 0);
-                    if (prob_sock < 0) return -1;
-                    sockaddr_in addr{};
-                    addr.sin_family = AF_INET;
-                    addr.sin_port = htons(probownerPort);
-                    if (::inet_pton(AF_INET, probownerIP.c_str(), &addr.sin_addr) <= 0) {
-                        ::close(prob_sock);
-                        return -1;
-                    }
-                    if (::connect(prob_sock, (sockaddr*)&addr, sizeof(addr)) < 0) {
-                        ::close(prob_sock);
-                        return -1;
-                    }
-                    SocketTable->LockAcquire();
-                    SocketTable->Insert(probowner_id, SocketRecord{prob_sock});
-                    probowner_socket_rec = SocketTable->Find(probowner_id);
-                }
-                
-                probowner_sock = probowner_socket_rec->socket;
-                update_seq = probowner_socket_rec->allocate_seq();
-                SocketTable->LockRelease();
-                
-                // Send OWNER_UPDATE message to probowner
-                dsm_header_t update_header = {
-                    DSM_MSG_OWNER_UPDATE,
-                    0,  // unused bit = 0 indicates lock table update (not page table)
-                    static_cast<uint16_t>(htons(NodeId)),
-                    htonl(update_seq),
-                    htonl(sizeof(payload_owner_update_t))
-                };
-                
-                payload_owner_update_t update_payload = {
-                    htonl(lockid),
-                    htons(NodeId)  // New owner is this node
-                };
-                
-                if (::send(probowner_sock, &update_header, sizeof(update_header), 0) != sizeof(update_header)) {
-                    return -1;
-                }
-                if (::send(probowner_sock, &update_payload, sizeof(update_payload), 0) != sizeof(update_payload)) {
-                    return -1;
-                }
-                
-                // Receive ACK
-                rio_t ack_rio;
-                rio_readinit(&ack_rio, probowner_sock);
-                
-                dsm_header_t ack_header;
-                if (rio_readn(&ack_rio, &ack_header, sizeof(ack_header)) != sizeof(ack_header)) {
-                    return -1;
-                }
-                
-                if (ack_header.type == DSM_MSG_ACK) {
-                    payload_ack_t ack_payload;
-                    if (rio_readn(&ack_rio, &ack_payload, sizeof(ack_payload)) != sizeof(ack_payload)) {
-                        return -1;
-                    }
-                    
-                    if (ack_payload.status != 0) {
-                        std::cerr << "[DSM Lock] ACK status failed for lock " << lockid << std::endl;
-                        return -1;
-                    }
-                }
-            }
-            
-            // Update local lock table
-            LockTable->LockAcquire();
-            auto local_rec = LockTable->Find(lockid);
-            if (local_rec != nullptr) {
-                local_rec->locked = true;
-                local_rec->owner_id = NodeId;
-                LockTable->Update(lockid, *local_rec);
-            } else {
-                // Insert new record if not exists
-                LockTable->Insert(lockid, LockRecord(NodeId));
-            }
-            LockTable->LockRelease();
-            
-            std::cout << "[DSM Lock] Successfully acquired lock " << lockid << std::endl;
-            return 0;
-        }
-    }
-    
-    return 0;
-}
+        send:
+        typedef struct {
+            DSM_MSG_LOCK_RLS           
+            0/1         
+            PodId    
+            seq_num        
+            sizeof(负载)    
+        } __attribute__((packed)) dsm_header_t;    
 
-int dsm_mutex_unlock(int *mutex){   //local operation
-    if (LockTable == nullptr || mutex == nullptr)
-        return -1;
+        // [DSM_MSG_LOCK_RLS] LockOwner -> Manager (释放锁)
+        typedef struct {
+            uint32_t invalid_set_count; // Scope Consistency: 需要失效的页数量
+            vector invalid_page_list;   // 把InvalidPages中标记的页号都放到这个list里发送给Manager
+        } __attribute__((packed)) payload_lock_rls_t;
 
-    LockTable->LockAcquire();
-    auto record = LockTable->Find(*mutex);
-    if(record == nullptr){
-        LockTable->LockRelease();
-        std::cerr << "[dsm_mutex_unlock] Invalid mutex ID: " << *mutex << std::endl;
-        return -1; // Invalid mutex ID
-    }
-    record->locked = false;
-    LockTable->Update(*mutex, *record);
-    LockTable->LockRelease();
-    return 0;
+
+
+    */
 }
 
 void dsm_bind(void *addr, const char *name){

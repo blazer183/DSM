@@ -19,33 +19,21 @@ STATIC struct sigaction g_prev_sa;  // previous SIGSEGV handler
 
 STATIC void segv_handler(int signo, siginfo_t* info, void* uctx)
 {
-    (void)uctx;
-    const uintptr_t fault = reinterpret_cast<uintptr_t>(info->si_addr);
-    const uintptr_t base  = reinterpret_cast<uintptr_t>(g_region);
-    const uintptr_t limit = base + g_region_pages * g_page_sz;
 
-    if (fault < base || fault >= limit) {
-        sigaction(SIGSEGV, &g_prev_sa, nullptr);
-        raise(SIGSEGV);
-        return;
-    }
+/*
+pseudocode：
+if(指针不在共享区内){
+    跳转系统缺页调用
+}else if(InvalidPages[this page] == 1){
+    InvalidPages[this page] = 1;  //标记已经修改了
+    mprotect回复页权限，直接返回
+}else{
+    pull_remote_page(page_base);
+}
 
-    const uintptr_t page_base = fault & ~(g_page_sz - 1);   // page base address
-    // Log the fault
-    std::cerr << "[handler] fault @ " << info->si_addr << " -> page "
-              << reinterpret_cast<void*>(page_base) << '\n';
 
-    // TODO: pull remote page, refresh version number, etc.
-    //pull_remote_page(page_base);
-
-    // Restore page permissions to read/write
-    if (mprotect(reinterpret_cast<void*>(page_base), g_page_sz,
-                 PROT_READ | PROT_WRITE) == -1) {
-        perror("mprotect");
-        _exit(1);
-    }
-
-    std::memset(reinterpret_cast<void*>(page_base), 0x42, g_page_sz);
+*/
+    
 }
 
 void install_handler(void* base_addr, size_t num_pages)
