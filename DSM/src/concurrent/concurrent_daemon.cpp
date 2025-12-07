@@ -2,6 +2,7 @@
 #include <thread>
 #include <vector>
 #include <mutex>
+#include <map>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -19,10 +20,15 @@ std::vector<int> joined_fds;           // Connected client sockets (bidirectiona
 bool barrier_ready = false;            // Whether all processes have joined
 int joined_count = 0;                  // Counter for joined processes (protected by join_mutex)
 
+// Global state for lock tracking
+std::mutex lock_tracking_mutex;
+std::map<uint16_t, uint32_t> node_to_lock_map;  // Maps node_id to lock_id it currently holds
+
 
 // Forward declarations for message handlers
 static bool handle_join_request(int connfd, const dsm_header_t &header);
 static bool handle_lock_acquire(int connfd, const dsm_header_t &header, rio_t &rp);
+static bool handle_lock_release(int connfd, const dsm_header_t &header, rio_t &rp);
 static bool handle_owner_update(int connfd, const dsm_header_t &header, rio_t &rp);
 static bool handle_unknown_message(int connfd, const dsm_header_t &header);
 
@@ -110,31 +116,22 @@ static bool handle_lock_acquire(int connfd, const dsm_header_t &header, rio_t &r
     std::cout << "[DSM Daemon] Received LOCK_ACQ for lock " << lock_id 
               << " from NodeId=" << requester_id << std::endl;
 
-    // Try to acquire the lock
-    // First, acquire the specific lock's mutex
-    bool lock_acquired = LockTable->Lock(lock_id);
-    
-    if (!lock_acquired) {
-        std::cerr << "[DSM Daemon] Failed to acquire lock table entry for lock " << lock_id << std::endl;
-        return false;
-    }
-
-    // Now acquire the global lock to read/update lock state
+    // Try to acquire the lock using trylock (non-blocking)
     LockTable->LockAcquire();
     
     LockRecord* record = LockTable->Find(lock_id);
     if (record == nullptr) {
         // Create new lock record
         LockRecord new_record;
-        new_record.owner_id = requester_id;
-        new_record.locked = true;
         LockTable->Insert(lock_id, new_record);
         record = LockTable->Find(lock_id);
     }
 
-    // Check if lock is already held
-    if (record->locked && record->owner_id != requester_id) {
-        // Lock is held by another node
+    // Try to acquire the pthread mutex for this lock (non-blocking)
+    int trylock_result = pthread_mutex_trylock(&record->lock_id);
+    
+    if (trylock_result != 0) {
+        // Lock is currently held by another thread/request
         std::cout << "[DSM Daemon] Lock " << lock_id << " is currently held by NodeId=" 
                   << record->owner_id << ", requester must wait" << std::endl;
         
@@ -154,14 +151,18 @@ static bool handle_lock_acquire(int connfd, const dsm_header_t &header, rio_t &r
         uint32_t zero = 0;
         ::send(connfd, &zero, sizeof(zero), 0);
         
-        // Don't unlock the lock_id mutex - keep it locked until lock is released
-        // Return true to keep processing other messages
-        return true;
+        return true;  // Continue processing other messages
     }
 
-    // Grant the lock
+    // Lock acquired successfully
     record->owner_id = requester_id;
     record->locked = true;
+    
+    // Track which lock this node holds
+    {
+        std::lock_guard<std::mutex> guard(lock_tracking_mutex);
+        node_to_lock_map[requester_id] = lock_id;
+    }
     
     // Prepare invalid page list from the record
     uint32_t invalid_count = record->invalid_page_list.size();
@@ -169,6 +170,9 @@ static bool handle_lock_acquire(int connfd, const dsm_header_t &header, rio_t &r
 
     std::cout << "[DSM Daemon] Granting lock " << lock_id << " to NodeId=" << requester_id 
               << " with " << invalid_count << " invalid pages" << std::endl;
+
+    // Copy invalid page list before releasing table lock
+    std::vector<int> invalid_pages = record->invalid_page_list;
 
     LockTable->LockRelease();
 
@@ -183,7 +187,9 @@ static bool handle_lock_acquire(int connfd, const dsm_header_t &header, rio_t &r
 
     if (::send(connfd, &rep_header, sizeof(rep_header), 0) != sizeof(rep_header)) {
         std::cerr << "[DSM Daemon] Failed to send LOCK_REP header" << std::endl;
-        LockTable->Unlock(lock_id);
+        LockTable->LockAcquire();
+        pthread_mutex_unlock(&record->lock_id);
+        LockTable->LockRelease();
         return false;
     }
 
@@ -191,95 +197,27 @@ static bool handle_lock_acquire(int connfd, const dsm_header_t &header, rio_t &r
     uint32_t invalid_count_net = htonl(invalid_count);
     if (::send(connfd, &invalid_count_net, sizeof(invalid_count_net), 0) != sizeof(invalid_count_net)) {
         std::cerr << "[DSM Daemon] Failed to send invalid_set_count" << std::endl;
-        LockTable->Unlock(lock_id);
+        LockTable->LockAcquire();
+        pthread_mutex_unlock(&record->lock_id);
+        LockTable->LockRelease();
         return false;
     }
 
     // Send invalid page list
-    LockTable->LockAcquire();
-    record = LockTable->Find(lock_id);
-    if (record != nullptr) {
-        for (int page_idx : record->invalid_page_list) {
-            uint32_t page_idx_net = htonl(page_idx);
-            if (::send(connfd, &page_idx_net, sizeof(page_idx_net), 0) != sizeof(page_idx_net)) {
-                std::cerr << "[DSM Daemon] Failed to send invalid page index" << std::endl;
-                LockTable->LockRelease();
-                LockTable->Unlock(lock_id);
-                return false;
-            }
-        }
-    }
-    LockTable->LockRelease();
-
-    // Now wait for LOCK_RLS message on this connection
-    dsm_header_t rls_header;
-    if (rio_readn(&rp, &rls_header, sizeof(rls_header)) != sizeof(rls_header)) {
-        std::cerr << "[DSM Daemon] Failed to read LOCK_RLS header" << std::endl;
-        LockTable->Unlock(lock_id);
-        return false;
-    }
-
-    if (rls_header.type != DSM_MSG_LOCK_RLS) {
-        std::cerr << "[DSM Daemon] Expected LOCK_RLS but got type " << (int)rls_header.type << std::endl;
-        LockTable->Unlock(lock_id);
-        return false;
-    }
-
-    // Read the release payload
-    uint32_t rls_payload_len = ntohl(rls_header.payload_len);
-    if (rls_payload_len >= sizeof(uint32_t)) {
-        uint32_t rls_invalid_count;
-        if (rio_readn(&rp, &rls_invalid_count, sizeof(rls_invalid_count)) != sizeof(rls_invalid_count)) {
-            std::cerr << "[DSM Daemon] Failed to read LOCK_RLS invalid_set_count" << std::endl;
-            LockTable->Unlock(lock_id);
+    for (int page_idx : invalid_pages) {
+        uint32_t page_idx_net = htonl(page_idx);
+        if (::send(connfd, &page_idx_net, sizeof(page_idx_net), 0) != sizeof(page_idx_net)) {
+            std::cerr << "[DSM Daemon] Failed to send invalid page index" << std::endl;
+            LockTable->LockAcquire();
+            pthread_mutex_unlock(&record->lock_id);
+            LockTable->LockRelease();
             return false;
         }
-        
-        rls_invalid_count = ntohl(rls_invalid_count);
-        
-        std::cout << "[DSM Daemon] Received LOCK_RLS for lock " << lock_id 
-                  << " with " << rls_invalid_count << " invalid pages" << std::endl;
-
-        // Read invalid page list and update lock record
-        std::vector<int> new_invalid_pages;
-        for (uint32_t i = 0; i < rls_invalid_count; i++) {
-            uint32_t page_idx;
-            if (rio_readn(&rp, &page_idx, sizeof(page_idx)) != sizeof(page_idx)) {
-                std::cerr << "[DSM Daemon] Failed to read invalid page index" << std::endl;
-                break;
-            }
-            new_invalid_pages.push_back(ntohl(page_idx));
-        }
-
-        // Update lock record with new invalid pages
-        LockTable->LockAcquire();
-        record = LockTable->Find(lock_id);
-        if (record != nullptr) {
-            record->invalid_page_list = new_invalid_pages;
-            record->invalid_set_count = rls_invalid_count;
-            record->locked = false;
-            record->owner_id = -1;
-        }
-        LockTable->LockRelease();
     }
 
-    // Send ACK for the release
-    dsm_header_t ack = {
-        DSM_MSG_ACK,
-        0,
-        htons(PodId),
-        htonl(ntohl(rls_header.seq_num)),
-        0
-    };
-    
-    ::send(connfd, &ack, sizeof(ack), 0);
+    std::cout << "[DSM Daemon] Lock " << lock_id << " granted and held by NodeId=" << requester_id << std::endl;
 
-    // Unlock the lock_id mutex
-    LockTable->Unlock(lock_id);
-
-    std::cout << "[DSM Daemon] Lock " << lock_id << " released" << std::endl;
-
-    return true;
+    return true;  // Continue processing other messages
 }
 
 static bool handle_owner_update(int connfd, const dsm_header_t &header, rio_t &rp) {
@@ -332,6 +270,94 @@ static bool handle_owner_update(int connfd, const dsm_header_t &header, rio_t &r
     return true;
 }
 
+static bool handle_lock_release(int connfd, const dsm_header_t &header, rio_t &rp) {
+    // Read the release payload
+    uint32_t payload_len = ntohl(header.payload_len);
+    if (payload_len < sizeof(uint32_t)) {
+        std::cerr << "[DSM Daemon] Invalid LOCK_RLS payload length" << std::endl;
+        return false;
+    }
+
+    uint32_t rls_invalid_count;
+    if (rio_readn(&rp, &rls_invalid_count, sizeof(rls_invalid_count)) != sizeof(rls_invalid_count)) {
+        std::cerr << "[DSM Daemon] Failed to read LOCK_RLS invalid_set_count" << std::endl;
+        return false;
+    }
+    
+    rls_invalid_count = ntohl(rls_invalid_count);
+    uint16_t src_node = ntohs(header.src_node_id);
+    uint32_t seq_num = ntohl(header.seq_num);
+    
+    // Read invalid page list
+    std::vector<int> new_invalid_pages;
+    for (uint32_t i = 0; i < rls_invalid_count; i++) {
+        uint32_t page_idx;
+        if (rio_readn(&rp, &page_idx, sizeof(page_idx)) != sizeof(page_idx)) {
+            std::cerr << "[DSM Daemon] Failed to read invalid page index" << std::endl;
+            break;
+        }
+        new_invalid_pages.push_back(ntohl(page_idx));
+    }
+
+    std::cout << "[DSM Daemon] Received LOCK_RLS from NodeId=" << src_node 
+              << " with " << rls_invalid_count << " invalid pages" << std::endl;
+
+    // Find which lock this node holds using our tracking map
+    uint32_t lock_id = 0;
+    bool found = false;
+    {
+        std::lock_guard<std::mutex> guard(lock_tracking_mutex);
+        auto it = node_to_lock_map.find(src_node);
+        if (it != node_to_lock_map.end()) {
+            lock_id = it->second;
+            found = true;
+            node_to_lock_map.erase(it);  // Remove from tracking
+        }
+    }
+
+    if (!found) {
+        std::cerr << "[DSM Daemon] No lock found for NodeId=" << src_node << std::endl;
+        // Still send ACK to avoid blocking the client
+    } else {
+        // Update lock record and unlock the pthread mutex
+        LockTable->LockAcquire();
+        
+        LockRecord* record = LockTable->Find(lock_id);
+        if (record != nullptr) {
+            // Update invalid page list
+            record->invalid_page_list = new_invalid_pages;
+            record->invalid_set_count = rls_invalid_count;
+            record->locked = false;
+            record->owner_id = -1;
+            
+            // Unlock the pthread mutex to allow other requests
+            pthread_mutex_unlock(&record->lock_id);
+            
+            std::cout << "[DSM Daemon] Released lock " << lock_id << std::endl;
+        }
+        
+        LockTable->LockRelease();
+    }
+
+    // Send ACK for the release
+    dsm_header_t ack = {
+        DSM_MSG_ACK,
+        0,
+        htons(PodId),
+        htonl(seq_num),
+        0
+    };
+    
+    if (::send(connfd, &ack, sizeof(ack), 0) != sizeof(ack)) {
+        std::cerr << "[DSM Daemon] Failed to send ACK for LOCK_RLS" << std::endl;
+        return false;
+    }
+
+    std::cout << "[DSM Daemon] Sent ACK for LOCK_RLS" << std::endl;
+
+    return true;
+}
+
 static bool handle_unknown_message(int connfd, const dsm_header_t &header) {
     std::cerr << "[DSM Daemon] Received unknown message type: 0x"
               << std::hex << static_cast<int>(header.type) << std::dec << std::endl;
@@ -369,6 +395,9 @@ void peer_handler(int connfd) {
                 break;
             case DSM_MSG_LOCK_ACQ:
                 keep_processing = handle_lock_acquire(connfd, header, rp);
+                break;
+            case DSM_MSG_LOCK_RLS:
+                keep_processing = handle_lock_release(connfd, header, rp);
                 break;
             case DSM_MSG_OWNER_UPDATE:
                 keep_processing = handle_owner_update(connfd, header, rp);
