@@ -43,6 +43,8 @@ int ProcNum = 0;
 int WorkerNodeNum = 0;
 std::vector<std::string> WorkerNodeIps;  // worker IP list
 int* InvalidPages = nullptr;            //0: valid, 1: invalid
+int* ValidPages = nullptr;              //0: not valid, 1: valid
+int* DirtyPages = nullptr;              //0: clean, 1: dirty
 
 STATIC std::string LeaderNodeIp;
 STATIC int LeaderNodePort = 0;
@@ -76,6 +78,72 @@ int GetPodPort(int pod_id) {
     }
     std::cerr << "[DSM Warning] Invalid PodID " << pod_id << std::endl;
     return -1;
+}
+
+// Helper function to get or create a socket connection to a remote pod
+// Returns existing socket if already connected, creates new connection otherwise
+int getsocket(const std::string& ip, int port) {
+    if (SocketTable == nullptr) {
+        std::cerr << "[getsocket] SocketTable not initialized" << std::endl;
+        return -1;
+    }
+
+    // Check if socket already exists for this target
+    int target_node = -1;
+    for (int i = 0; i < ProcNum; i++) {
+        if (GetPodIp(i) == ip && GetPodPort(i) == port) {
+            target_node = i;
+            break;
+        }
+    }
+
+    if (target_node >= 0) {
+        SocketTable->LockAcquire();
+        SocketRecord* record = SocketTable->Find(target_node);
+        if (record != nullptr && record->socket >= 0) {
+            int existing_sock = record->socket;
+            SocketTable->LockRelease();
+            return existing_sock;
+        }
+        SocketTable->LockRelease();
+    }
+
+    // Create new socket connection
+    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd < 0) {
+        std::cerr << "[getsocket] Failed to create socket: " << std::strerror(errno) << std::endl;
+        return -1;
+    }
+
+    struct sockaddr_in server_addr;
+    std::memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(port);
+
+    if (inet_pton(AF_INET, ip.c_str(), &server_addr.sin_addr) <= 0) {
+        std::cerr << "[getsocket] Invalid address: " << ip << std::endl;
+        close(sockfd);
+        return -1;
+    }
+
+    if (connect(sockfd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+        std::cerr << "[getsocket] Failed to connect to " << ip << ":" << port 
+                  << " - " << std::strerror(errno) << std::endl;
+        close(sockfd);
+        return -1;
+    }
+
+    // Store socket in SocketTable if we identified the target node
+    if (target_node >= 0) {
+        SocketTable->LockAcquire();
+        SocketRecord new_record;
+        new_record.socket = sockfd;
+        new_record.next_seq = 1;
+        SocketTable->Insert(target_node, new_record);
+        SocketTable->LockRelease();
+    }
+
+    return sockfd;
 }
 
 template<typename T>
@@ -165,7 +233,11 @@ bool InitDataStructs(int dsm_memsize)
             return false;
         }
         ValidPages = new int[SharedPages];
+        std::memset(ValidPages, 0, sizeof(int) * SharedPages);
+        DirtyPages = new int[SharedPages];
         std::memset(DirtyPages, 0, sizeof(int) * SharedPages);
+        InvalidPages = new int[SharedPages];
+        std::memset(InvalidPages, 0, sizeof(int) * SharedPages);
         install_handler(SharedAddrBase, SharedPages);
     }else {
         std::cerr << "[dsm] invalid shared region parameters (base=" << SharedAddrBase 
@@ -271,73 +343,194 @@ int dsm_mutex_lock(int *mutex){
     
     int lockprobowner = lockid % ProcNum;
 
-    /*  
-        查询并建立socket，这里建议封装成函数调用，
-    比如getsocket(int PodId, int NodePort) 函数内部判断如果已经存在socket就直接返回，如果不存在就建立连接。
-
-        socket = getsocket(lockprobowner, LeaderNodePort);
-        send:
-        struct {
-            DSM_MSG_LOCK_ACQ
-            0/1
-            PodId
-            seq_num
-            sizeof(payload)
-        }
-
-        payload:
-        struct {
-            lock_id	//uint32_t类型 锁ID
-        }
-
-        recv:
-        struct {
-            DSM_MSG_LOCK_REP 
-            1				//！！！
-            PodId
-            seq_num
-            sizeof(payload)
-        }
-
-        payload 
-        // [DSM_MSG_LOCK_REP] Manager -> Requestor (授予锁)
-        typedef struct {
-            uint32_t invalid_set_count; 
-            vector invalid_page_list;
-        } __attribute__((packed)) payload_lock_rep_t;
-
-        将全部共享区都设置为invalid(可以记录在锁获取期间修改了哪些页)
-        将vector invalid page list 全部copy到全局变量 InvalidPages [SharedPages], 用于记录哪些页无效.
-        
-        return ;
-
-    */
+    // Get or create socket connection to the probable owner
+    std::string target_ip = GetPodIp(lockprobowner);
+    int target_port = GetPodPort(lockprobowner);
     
+    int sock = getsocket(target_ip, target_port);
+    if (sock < 0) {
+        std::cerr << "[dsm_mutex_lock] Failed to connect to lock manager at " 
+                  << target_ip << ":" << target_port << std::endl;
+        return -1;
+    }
+
+    // Get sequence number for this connection
+    uint32_t seq_num = 1;
+    SocketTable->LockAcquire();
+    SocketRecord* record = SocketTable->Find(lockprobowner);
+    if (record != nullptr) {
+        seq_num = record->allocate_seq();
+    }
+    SocketTable->LockRelease();
+
+    // Build and send LOCK_ACQ message
+    dsm_header_t req_header = {
+        DSM_MSG_LOCK_ACQ,
+        0,                          // unused
+        htons(PodId),              // src_node_id
+        htonl(seq_num),            // seq_num
+        htonl(sizeof(payload_lock_req_t))  // payload_len
+    };
+
+    payload_lock_req_t req_payload = {
+        htonl(lockid)              // lock_id
+    };
+
+    // Send header and payload
+    if (::send(sock, &req_header, sizeof(req_header), 0) != sizeof(req_header)) {
+        std::cerr << "[dsm_mutex_lock] Failed to send request header" << std::endl;
+        return -1;
+    }
+    
+    if (::send(sock, &req_payload, sizeof(req_payload), 0) != sizeof(req_payload)) {
+        std::cerr << "[dsm_mutex_lock] Failed to send request payload" << std::endl;
+        return -1;
+    }
+
+    // Receive response
+    rio_t rio;
+    rio_readinit(&rio, sock);
+
+    dsm_header_t rep_header;
+    if (rio_readn(&rio, &rep_header, sizeof(rep_header)) != sizeof(rep_header)) {
+        std::cerr << "[dsm_mutex_lock] Failed to receive response header" << std::endl;
+        return -1;
+    }
+
+    // Check if this is a LOCK_REP or if we need to wait/retry
+    if (rep_header.type == DSM_MSG_LOCK_REP && rep_header.unused == 1) {
+        // Lock acquired successfully, read payload
+        uint32_t payload_len = ntohl(rep_header.payload_len);
+        
+        if (payload_len >= sizeof(uint32_t)) {
+            payload_lock_rep_t rep_payload;
+            if (rio_readn(&rio, &rep_payload, sizeof(uint32_t)) != sizeof(uint32_t)) {
+                std::cerr << "[dsm_mutex_lock] Failed to read invalid_set_count" << std::endl;
+                return -1;
+            }
+            
+            uint32_t invalid_count = ntohl(rep_payload.invalid_set_count);
+            
+            // Read invalid page list if any
+            if (invalid_count > 0 && InvalidPages != nullptr) {
+                std::vector<uint32_t> invalid_pages(invalid_count);
+                size_t bytes_to_read = invalid_count * sizeof(uint32_t);
+                if (rio_readn(&rio, invalid_pages.data(), bytes_to_read) != (ssize_t)bytes_to_read) {
+                    std::cerr << "[dsm_mutex_lock] Failed to read invalid page list" << std::endl;
+                    return -1;
+                }
+                
+                // Mark pages as invalid
+                for (uint32_t i = 0; i < invalid_count; i++) {
+                    uint32_t page_idx = ntohl(invalid_pages[i]);
+                    if (page_idx < SharedPages) {
+                        InvalidPages[page_idx] = 1;
+                    }
+                }
+            }
+        }
+        
+        return 0;  // Success
+    } else if (rep_header.type == DSM_MSG_LOCK_REP && rep_header.unused == 0) {
+        // Lock is held by another node, retry after a short delay
+        std::cerr << "[dsm_mutex_lock] Lock " << lockid << " is held by another node, retrying..." << std::endl;
+        usleep(100000);  // Wait 100ms before retry
+        return dsm_mutex_lock(mutex);  // Retry
+    }
+
+    std::cerr << "[dsm_mutex_lock] Unexpected response type: " << (int)rep_header.type << std::endl;
+    return -1;
 }    
 
 int dsm_mutex_unlock(int *mutex){   
-    /*
-        
-        socket = getsocket(probownerid, LeaderNodePort);
-        
-        send:
-        typedef struct {
-            DSM_MSG_LOCK_RLS           
-            0/1         
-            PodId    
-            seq_num        
-            sizeof(负载)    
-        } __attribute__((packed)) dsm_header_t;    
+    if (mutex == nullptr || SocketTable == nullptr || LockTable == nullptr)
+        return -1;
 
-        // [DSM_MSG_LOCK_RLS] LockOwner -> Manager (释放锁)
-        typedef struct {
-            uint32_t invalid_set_count; // Scope Consistency: 需要失效的页数量
-            vector invalid_page_list;   // 把InvalidPages中标记的页号都放到这个list里发送给Manager
-        } __attribute__((packed)) payload_lock_rls_t;
+    const int lockid = *mutex;
+    int lockprobowner = lockid % ProcNum;
 
+    // Get socket connection to the probable owner
+    std::string target_ip = GetPodIp(lockprobowner);
+    int target_port = GetPodPort(lockprobowner);
+    
+    int sock = getsocket(target_ip, target_port);
+    if (sock < 0) {
+        std::cerr << "[dsm_mutex_unlock] Failed to connect to lock manager" << std::endl;
+        return -1;
+    }
 
+    // Get sequence number
+    uint32_t seq_num = 1;
+    SocketTable->LockAcquire();
+    SocketRecord* record = SocketTable->Find(lockprobowner);
+    if (record != nullptr) {
+        seq_num = record->allocate_seq();
+    }
+    SocketTable->LockRelease();
 
-    */
+    // Collect invalid pages from InvalidPages array
+    std::vector<uint32_t> invalid_pages;
+    if (InvalidPages != nullptr) {
+        for (size_t i = 0; i < SharedPages; i++) {
+            if (InvalidPages[i] == 1) {
+                invalid_pages.push_back(i);
+                InvalidPages[i] = 0;  // Reset after collecting
+            }
+        }
+    }
+
+    uint32_t invalid_count = invalid_pages.size();
+    uint32_t payload_len = sizeof(uint32_t) + invalid_count * sizeof(uint32_t);
+
+    // Build and send LOCK_RLS message
+    dsm_header_t req_header = {
+        DSM_MSG_LOCK_RLS,
+        0,                          // unused
+        htons(PodId),              // src_node_id
+        htonl(seq_num),            // seq_num
+        htonl(payload_len)         // payload_len
+    };
+
+    // Send header
+    if (::send(sock, &req_header, sizeof(req_header), 0) != sizeof(req_header)) {
+        std::cerr << "[dsm_mutex_unlock] Failed to send release header" << std::endl;
+        return -1;
+    }
+
+    // Send invalid_set_count
+    uint32_t invalid_count_net = htonl(invalid_count);
+    if (::send(sock, &invalid_count_net, sizeof(invalid_count_net), 0) != sizeof(invalid_count_net)) {
+        std::cerr << "[dsm_mutex_unlock] Failed to send invalid_set_count" << std::endl;
+        return -1;
+    }
+
+    // Send invalid page list
+    if (invalid_count > 0) {
+        for (uint32_t page_idx : invalid_pages) {
+            uint32_t page_idx_net = htonl(page_idx);
+            if (::send(sock, &page_idx_net, sizeof(page_idx_net), 0) != sizeof(page_idx_net)) {
+                std::cerr << "[dsm_mutex_unlock] Failed to send invalid page index" << std::endl;
+                return -1;
+            }
+        }
+    }
+
+    // Wait for ACK
+    rio_t rio;
+    rio_readinit(&rio, sock);
+
+    dsm_header_t ack_header;
+    if (rio_readn(&rio, &ack_header, sizeof(ack_header)) != sizeof(ack_header)) {
+        std::cerr << "[dsm_mutex_unlock] Failed to receive ACK" << std::endl;
+        return -1;
+    }
+
+    if (ack_header.type != DSM_MSG_ACK) {
+        std::cerr << "[dsm_mutex_unlock] Unexpected response type: " << (int)ack_header.type << std::endl;
+        return -1;
+    }
+
+    return 0;
 }
 
 void dsm_bind(void *addr, const char *name){

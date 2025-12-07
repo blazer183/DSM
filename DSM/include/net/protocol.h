@@ -51,7 +51,7 @@ typedef enum {
     // 3. 锁请求流程
     DSM_MSG_LOCK_ACQ      = 0x20,  // A向B发送锁请求
     DSM_MSG_LOCK_REP      = 0x21,  // B向A返回锁请求，一并返回的还有无效页号
-    DSM_MSG_LOCK_RLS      = 0X22   // A向B发送锁释放，返回无效页号的list，B会将该list存储在锁表里
+    DSM_MSG_LOCK_RLS      = 0X22,  // A向B发送锁释放，返回无效页号的list，B会将该list存储在锁表里
 
     // 4. 维护与确认
     DSM_MSG_OWNER_UPDATE  = 0x30,  // 告知Manager页表所有权已变更
@@ -81,7 +81,7 @@ typedef struct {
 // [DSM_MSG_PAGE_REP] Manager -> Requestor
 typedef struct {
     uint16_t real_owner_id;
-    char pagedata[DSM_PAGE_SIZE]
+    char pagedata[DSM_PAGE_SIZE];
 } __attribute__((packed)) payload_page_rep_t;
 
 // [DSM_MSG_LOCK_ACQ]  Requestor -> Manager
@@ -92,13 +92,13 @@ typedef struct {
 // [DSM_MSG_LOCK_REP] Manager -> Requestor (授予锁)
 typedef struct {
     uint32_t invalid_set_count; // Scope Consistency: 需要失效的页数量
-    vector invalid_page_list;
+    // Note: invalid_page_list follows as array of uint32_t[invalid_set_count]
 } __attribute__((packed)) payload_lock_rep_t;
 
 // [DSM_MSG_LOCK_RLS] LockOwner -> Manager (释放锁)
 typedef struct {
     uint32_t invalid_set_count; // Scope Consistency: 需要失效的页数量
-    vector invalid_page_list;
+    // Note: invalid_page_list follows as array of uint32_t[invalid_set_count]
 } __attribute__((packed)) payload_lock_rls_t;
 
 // [DSM_MSG_OWNER_UPDATE] RealOwner -> Manager
