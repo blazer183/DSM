@@ -398,7 +398,7 @@ int dsm_mutex_lock(int *mutex){
     }
 
     // Check if this is a LOCK_REP or if we need to wait/retry
-    if (rep_header.type == DSM_MSG_LOCK_REP && rep_header.unused == 1) {
+    if (rep_header.type == DSM_MSG_LOCK_REP ) {
         // Lock acquired successfully, read payload
         uint32_t payload_len = ntohl(rep_header.payload_len);
         
@@ -431,12 +431,7 @@ int dsm_mutex_lock(int *mutex){
         }
         
         return 0;  // Success
-    } else if (rep_header.type == DSM_MSG_LOCK_REP && rep_header.unused == 0) {
-        // Lock is held by another node, retry after a short delay
-        std::cerr << "[dsm_mutex_lock] Lock " << lockid << " is held by another node, retrying..." << std::endl;
-        usleep(100000);  // Wait 100ms before retry
-        return dsm_mutex_lock(mutex);  // Retry (TODO: add max retry count to prevent infinite recursion)
-    }
+    } 
 
     std::cerr << "[dsm_mutex_lock] Unexpected response type: " << (int)rep_header.type << std::endl;
     return -1;
@@ -543,10 +538,13 @@ void dsm_bind(void *addr, const char *name){
 }
 
 void *dsm_malloc(size_t size){
-    if(SharedAddrCurrentLoc + size > SharedAddrBase + SharedPages * DSM_PAGE_SIZE){
-        std::cerr << "[dsm_malloc] Out of shared memory!" << std::endl;
+    if ((char*)SharedAddrCurrentLoc + size > (char*)SharedAddrBase + (SharedPages * DSM_PAGE_SIZE)) {
         return nullptr;
     }
-    SharedAddrCurrentLoc += size;
-    return SharedAddrCurrentLoc - size;
+
+    void* allocated_ptr = SharedAddrCurrentLoc;
+
+    SharedAddrCurrentLoc = (char*)SharedAddrCurrentLoc + size;
+
+    return allocated_ptr;
 }

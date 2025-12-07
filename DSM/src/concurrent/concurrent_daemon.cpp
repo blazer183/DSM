@@ -58,7 +58,7 @@ static bool handle_join_request(int connfd, const dsm_header_t &header) {
     
     joined_count++;
     
-    std::cout << "[DSM Daemon] Currently connected: " << joined_count << " / " << ProcNum << std::endl;
+    std::cout << "[DSM Daemon] Currently connected: socket number " << connfd << std::endl;
 
     // Check if all processes have joined
     if (joined_count < ProcNum) {
@@ -116,45 +116,26 @@ static bool handle_lock_acquire(int connfd, const dsm_header_t &header, rio_t &r
     std::cout << "[DSM Daemon] Received LOCK_ACQ for lock " << lock_id 
               << " from NodeId=" << requester_id << std::endl;
 
-    // Try to acquire the lock using trylock (non-blocking)
+    // Prepare or create lock record under table mutex
     LockTable->LockAcquire();
-    
     LockRecord* record = LockTable->Find(lock_id);
     if (record == nullptr) {
-        // Create new lock record
         LockRecord new_record;
         LockTable->Insert(lock_id, new_record);
         record = LockTable->Find(lock_id);
     }
+    LockTable->LockRelease();
 
-    // Try to acquire the pthread mutex for this lock (non-blocking)
-    int trylock_error = pthread_mutex_trylock(&record->lock_id);
-    
-    if (trylock_error != 0) {
-        // Lock is currently held by another thread/request
-        std::cout << "[DSM Daemon] Lock " << lock_id << " is currently held by NodeId=" 
-                  << record->owner_id << ", requester must wait" << std::endl;
-        
-        LockTable->LockRelease();
-        
-        // Send LOCK_REP with unused=0 to indicate lock is held
-        dsm_header_t rep_header = {
-            DSM_MSG_LOCK_REP,
-            0,  // unused=0: lock is held by another
-            htons(PodId),
-            htonl(seq_num),
-            htonl(sizeof(uint32_t))  // Just send invalid_set_count = 0
-        };
-        
-        ::send(connfd, &rep_header, sizeof(rep_header), 0);
-        
-        uint32_t zero = 0;
-        ::send(connfd, &zero, sizeof(zero), 0);
-        
-        return true;  // Continue processing other messages
+    // Block until we acquire the pthread mutex for this lock
+    int lock_error = pthread_mutex_lock(&record->lock_id);
+    if (lock_error != 0) {
+        std::cerr << "[DSM Daemon] pthread_mutex_lock failed for lock " << lock_id
+                  << ": " << lock_error << std::endl;
+        return false;
     }
 
-    // Lock acquired successfully
+    // Update record metadata now that we hold the mutex
+    LockTable->LockAcquire();
     record->owner_id = requester_id;
     record->locked = true;
     
@@ -173,7 +154,6 @@ static bool handle_lock_acquire(int connfd, const dsm_header_t &header, rio_t &r
 
     // Copy invalid page list before releasing table lock
     std::vector<int> invalid_pages = record->invalid_page_list;
-
     LockTable->LockRelease();
 
     // Send LOCK_REP with unused=1 to indicate lock is granted
@@ -439,14 +419,22 @@ void dsm_start_daemon(int port) {
         return;
     }
 
-    // 2. Set socket options to reuse address
+    // 2. Set socket options to reuse address/port so TIME_WAIT sockets don't block restart
     int optval = 1;
-    if (setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, 
-                   (const void *)&optval, sizeof(int)) < 0) {
-        perror("[DSM Daemon] setsockopt failed");
+    if (setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR,
+                   (const void *)&optval, sizeof(optval)) < 0) {
+        perror("[DSM Daemon] setsockopt SO_REUSEADDR failed");
         close(listenfd);
         return;
     }
+#ifdef SO_REUSEPORT
+    if (setsockopt(listenfd, SOL_SOCKET, SO_REUSEPORT,
+                   (const void *)&optval, sizeof(optval)) < 0) {
+        perror("[DSM Daemon] setsockopt SO_REUSEPORT failed");
+        close(listenfd);
+        return;
+    }
+#endif
 
     // 3. Bind socket to specified port
     bzero((char *)&serveraddr, sizeof(serveraddr));

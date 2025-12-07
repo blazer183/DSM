@@ -25,7 +25,7 @@ int main()
     }
     
     std::cout << "SUCCESS: dsm_init() completed successfully!" << std::endl;
-    std::cout << std::endl;
+    std::cout <<  std::endl;
     
     // ============ 2. Verify DSM initialization state ============
     std::cout << "[Step 2] Verifying DSM initialization state..." << std::endl;
@@ -45,7 +45,7 @@ int main()
     
 #ifdef UNITEST
     // If UNITEST is defined, we can call internal functions
-    for (int pod_id = 0; pod_id < 3; pod_id++) {
+    for (int pod_id = 0; pod_id < ProcNum; pod_id++) {
         std::string ip = GetPodIp(pod_id);
         int port = GetPodPort(pod_id);
         std::cout << "  PodID=" << pod_id << " -> " << ip << ":" << port << std::endl;
@@ -57,19 +57,18 @@ int main()
 #endif
     std::cout << std::endl;
     
-    // ============ 4. Clean up and exit ============
+    // ============ 4. test lock/unlock ============
     std::cout << "[Step 4] verify lock aquire..." << std::endl;
     int lock_A = dsm_mutex_init();
     dsm_mutex_lock(&lock_A);
-    std::cout<<"I'm "<< pod_id <<" and I get lock A!"<<std::endl;
-    sleep(3);
-    std::cout << "See? No one can get lock A because I locked it!..." << std::endl;
+    std::cout<<"I'm "<< pod_id <<" and I get lock_A!"<<std::endl;
+    sleep(0.5);
+    std::cout << "See? No one can get lock_A because I locked it!..." << std::endl;
     dsm_mutex_unlock(&lock_A);
 
+    // ============ 5. Clean up and exit ============
     std::cout << "[Step 5] Cleaning up resources and exiting..." << std::endl;
-    // Call dsm_finalize() if available
     dsm_finalize();
-    //sleep(5); 
     
     std::cout << "INFO: Program terminated normally" << std::endl;
     std::cout << "\n========================================" << std::endl;
