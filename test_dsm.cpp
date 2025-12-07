@@ -30,14 +30,14 @@ int main()
     // ============ 2. Verify DSM initialization state ============
     std::cout << "[Step 2] Verifying DSM initialization state..." << std::endl;
     
-    int node_id = dsm_getnodeid();
-    std::cout << "  Current node ID: " << node_id << std::endl;
-    
-    if (node_id < 0) {
-        std::cerr << "ERROR: Failed to get NodeID" << std::endl;
+    int pod_id = dsm_getpodid();
+    std::cout << "  Current pod ID: " << pod_id << std::endl;
+
+    if (pod_id < 0) {
+        std::cerr << "ERROR: Failed to get PodID" << std::endl;
         return 1;
     }
-    std::cout << "SUCCESS: NodeID retrieved successfully" << std::endl;
+    std::cout << "SUCCESS: PodID retrieved successfully" << std::endl;
     std::cout << std::endl;
     
     // ============ 3. Test shared memory address mapping ============
@@ -61,7 +61,7 @@ int main()
     std::cout << "[Step 4] verify lock aquire..." << std::endl;
     int lock_A = dsm_mutex_init();
     dsm_mutex_lock(&lock_A);
-    std::cout<<"I'm "<< node_id <<" and I get lock A!"<<std::endl;
+    std::cout<<"I'm "<< pod_id <<" and I get lock A!"<<std::endl;
     sleep(3);
     std::cout << "See? No one can get lock A because I locked it!..." << std::endl;
     dsm_mutex_unlock(&lock_A);

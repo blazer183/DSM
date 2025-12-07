@@ -23,7 +23,7 @@ extern struct BindTable *BindTable;         //
 extern struct SocketTable *SocketTable;     // 
 
 extern size_t SharedPages;                  //
-extern int NodeId;                          // 
+extern int PodId;                           // 
 extern void *SharedAddrBase;                // 
 extern int ProcNum;                         // 
 extern int WorkerNodeNum;                   // 
@@ -34,7 +34,7 @@ extern std::vector<std::string> WorkerNodeIps;  //
 int dsm_init(int dsm_memsize);  
 
 int dsm_finalize(void);
-int dsm_getnodeid(void);
+int dsm_getpodid(void);
 
 int dsm_mutex_init();
 int dsm_mutex_destroy(int *mutex);

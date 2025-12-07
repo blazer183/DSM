@@ -37,7 +37,7 @@ struct BindTable *BindTable = nullptr;
 struct SocketTable *SocketTable = nullptr;
 
 size_t SharedPages = 0;
-int NodeId = -1;
+int PodId = -1;
 void *SharedAddrBase = nullptr;
 int ProcNum = 0;
 int WorkerNodeNum = 0;
@@ -55,7 +55,9 @@ std::string GetPodIp(int pod_id) {
     if (pod_id == 0) {
         // Leader Pod
         return LeaderNodeIp;
-    } else if (pod_id > 0 && WorkerNodeNum > 0) {
+    } else if (pod_id == PodId) {
+        return "127.0.0.1";
+    }else if (pod_id > 0 && WorkerNodeNum > 0) {
         // Worker Pod: pod_id % WorkerNodeNum
         int worker_index = pod_id % WorkerNodeNum;
         if (worker_index < static_cast<int>(WorkerNodeIps.size())) {
@@ -122,7 +124,7 @@ bool FetchGlobalData(int dsm_memsize)
     if (!GetEnvVar("DSM_LEADER_IP", LeaderNodeIp, std::string(""), true)) exit(1);
     if (!GetEnvVar("DSM_LEADER_PORT", LeaderNodePort, 0, true)) exit(1);
     if (!GetEnvVar("DSM_TOTAL_PROCESSES", ProcNum, 1, false)) exit(1);
-    if (!GetEnvVar("DSM_NODE_ID", NodeId, -1, false)) exit(1);
+    if (!GetEnvVar("DSM_POD_ID", PodId, -1, false)) exit(1);
     if (!GetEnvVar("DSM_WORKER_COUNT", WorkerNodeNum, 0, false)) exit(1);
     std::string worker_ips_str;
     if (!GetEnvVar("DSM_WORKER_IPS", worker_ips_str, std::string(""), false)) exit(1);
@@ -135,9 +137,9 @@ bool FetchGlobalData(int dsm_memsize)
         }
         std::cout << "[DSM Info] Parsed " << WorkerNodeIps.size() << " worker IPs" << std::endl;
     }
-    const bool ok = (NodeId >= 0) && (SharedAddrBase != nullptr) && (SharedPages > 0);
+    const bool ok = (PodId >= 0) && (SharedAddrBase != nullptr) && (SharedPages > 0);
     if (!ok) {
-        std::cerr << "[dsm] invalid shared region parameters (PodID=" << NodeId
+        std::cerr << "[dsm] invalid shared region parameters (PodID=" << PodId
                   << ", base=" << SharedAddrBase << ", pages=" << SharedPages << ")" << std::endl;
         return false;
     }
@@ -204,7 +206,7 @@ bool dsm_barrier()
     dsm_header_t req = {
         DSM_MSG_JOIN_REQ,                    
         0,                       // unused
-        htons(NodeId),           // src_node_id: source node ID
+    htons(PodId),            // src_node_id: source pod ID
         htonl(1),                // seq_num: 1 
         0                       // payload length
     };
@@ -224,7 +226,7 @@ int dsm_init(int dsm_memsize)
 {
     if (!FetchGlobalData(dsm_memsize))
         return -1;
-    if(!LaunchListenerThread(LeaderNodePort+NodeId))
+    if(!LaunchListenerThread(LeaderNodePort+PodId))
         return -2;
     if (!InitDataStructs(dsm_memsize))
         return -3;
@@ -233,8 +235,8 @@ int dsm_init(int dsm_memsize)
     return 0;
 }
 
-int dsm_getnodeid(void){
-    return NodeId;
+int dsm_getpodid(void){
+    return PodId;
 }
 
 int dsm_finalize(void){
@@ -271,7 +273,7 @@ int dsm_mutex_lock(int *mutex){
 
     /*  
         查询并建立socket，这里建议封装成函数调用，
-        比如getsocket(int NodeId, int NodePort) 函数内部判断如果已经存在socket就直接返回，如果不存在就建立连接。
+    比如getsocket(int PodId, int NodePort) 函数内部判断如果已经存在socket就直接返回，如果不存在就建立连接。
 
         socket = getsocket(lockprobowner, LeaderNodePort);
         send:

@@ -1,6 +1,3 @@
-// src/concurrent/concurrent_daemon.cpp
-// Simplified implementation of Barrier synchronization and JOIN_REQ/ACK handling
-
 #include <iostream>
 #include <thread>
 #include <vector>
@@ -31,50 +28,26 @@ static bool handle_unknown_message(int connfd, const dsm_header_t &header);
 
 
 static bool handle_join_request(int connfd, const dsm_header_t &header) {
-    (void)connfd; // Unused, kept for consistent signature
-
-    std::cout << "[DSM Daemon] Received JOIN_REQ: NodeId=" << ntohs(header.src_node_id) << std::endl;
-
-    bool should_broadcast = false;
-    {
-        std::lock_guard<std::mutex> lock(join_mutex);
-
-        joined_fds.push_back(connfd);
-        joined_count++;
-
-        std::cout << "[DSM Daemon] Currently connected: " << joined_count
-                  << " / " << ProcNum << std::endl;
-
-        if (joined_count == ProcNum && !barrier_ready) {
-            barrier_ready = true;
-            should_broadcast = true;
-        }
+    /*
+    这里处理barrier的实现
+    aquire(join_mutex)
+    joined_count++;
+    if(connfd is not in joined_fds){
+        joined_fds.insert(connfd);
+    } 
+    if(joined_count != ProcNum){
+        release(join_mutex);
+        return ;
     }
-
-    if (should_broadcast) {
-        std::cout << "[DSM Daemon] All processes ready, broadcasting JOIN_ACK..." << std::endl;
-
-        dsm_header_t ack_header{};
-        ack_header.type = DSM_MSG_JOIN_ACK;
-        ack_header.payload_len = 0;
-        ack_header.src_node_id = htons(NodeId);
-        ack_header.seq_num = 0;
-        ack_header.unused = 0;
-
-        std::lock_guard<std::mutex> lock(join_mutex);
-        for (int fd : joined_fds) {
-            ssize_t nw = write(fd, &ack_header, sizeof(dsm_header_t));
-            if (nw != sizeof(dsm_header_t)) {
-                std::cerr << "[DSM Daemon] Failed to send JOIN_ACK to fd=" << fd << std::endl;
-            } else {
-                std::cout << "[DSM Daemon] Sent JOIN_ACK to fd=" << fd << std::endl;
-            }
-        }
-
-        std::cout << "[DSM Daemon] Barrier synchronization complete!" << std::endl;
+    
+    joined_count = 0;
+    for each fd in joined_fds:{
+        send ACK to it.
+        cout some information
     }
-
-    return true;
+    
+    return ;
+    */
 }
 
 static bool handle_lock_acquire(int connfd, const dsm_header_t &header, rio_t &rp) {
@@ -111,72 +84,14 @@ static bool handle_lock_acquire(int connfd, const dsm_header_t &header, rio_t &r
 }
 
 static bool handle_owner_update(int connfd, const dsm_header_t &header, rio_t &rp) {
-    payload_owner_update_t update_payload{};
-    if (rio_readn(&rp, &update_payload, sizeof(update_payload)) != sizeof(update_payload)) {
-        std::cerr << "[DSM Daemon] Failed to read OWNER_UPDATE payload" << std::endl;
-        close(connfd);
-        return false;
-    }
-
-    uint32_t resource_id = ntohl(update_payload.resource_id);
-    uint16_t new_owner = ntohs(update_payload.new_owner_id);
-    uint16_t requester_id = ntohs(header.src_node_id);
-
-    if (header.unused == 0) {
-        std::cout << "[DSM Daemon] Received OWNER_UPDATE for lock " << resource_id
-                  << " from NodeId=" << requester_id << ", new owner=" << new_owner << std::endl;
-
-        LockTable->LockAcquire();
-        auto lock_rec = LockTable->Find(resource_id);
-        if (lock_rec != nullptr) {
-            lock_rec->owner_id = new_owner;
-            lock_rec->locked = true;
-            LockTable->Update(resource_id, *lock_rec);
-        } else {
-            LockTable->Insert(resource_id, LockRecord(new_owner));
-        }
-        LockTable->LockRelease();
-
-        std::cout << "[DSM Daemon] Updated lock " << resource_id
-                  << " owner to NodeId=" << new_owner << std::endl;
-    } else {
-        std::cout << "[DSM Daemon] Received OWNER_UPDATE for page " << resource_id
-                  << " from NodeId=" << requester_id << ", new owner=" << new_owner << std::endl;
-
-        PageTable->LockAcquire();
-        auto page_rec = PageTable->Find(resource_id);
-        if (page_rec != nullptr) {
-            page_rec->owner_id = new_owner;
-            PageTable->Update(resource_id, *page_rec);
-        }
-        PageTable->LockRelease();
-
-        std::cout << "[DSM Daemon] Updated page " << resource_id
-                  << " owner to NodeId=" << new_owner << std::endl;
-    }
-
-    dsm_header_t ack_header{};
-    ack_header.type = DSM_MSG_ACK;
-    ack_header.unused = 0;
-    ack_header.src_node_id = htons(NodeId);
-    ack_header.seq_num = header.seq_num;
-    ack_header.payload_len = htonl(sizeof(payload_ack_t));
-
-    payload_ack_t ack_payload{};
-    ack_payload.status = 0;
-
-    if (write(connfd, &ack_header, sizeof(ack_header)) != sizeof(ack_header)) {
-        std::cerr << "[DSM Daemon] Failed to send ACK header" << std::endl;
-        close(connfd);
-        return false;
-    }
-    if (write(connfd, &ack_payload, sizeof(ack_payload)) != sizeof(ack_payload)) {
-        std::cerr << "[DSM Daemon] Failed to send ACK payload" << std::endl;
-        close(connfd);
-        return false;
-    }
-
-    return true;
+    /*
+    read information from the msg
+    PageTable.lockaquire();
+    PageTable.update(pagenum, newowner);
+    PageTable.lockrelease();
+    send ACK;
+    return ;
+    */
 }
 
 static bool handle_unknown_message(int connfd, const dsm_header_t &header) {
@@ -245,7 +160,7 @@ void dsm_start_daemon(int port) {
         return;
     }
 
-    // 2. �����˿ڸ��ã����� TIME_WAIT ״̬���°�ʧ�ܣ�
+    // 2. Set socket options to reuse address
     int optval = 1;
     if (setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, 
                    (const void *)&optval, sizeof(int)) < 0) {
@@ -254,10 +169,10 @@ void dsm_start_daemon(int port) {
         return;
     }
 
-    // 3. �󶨵�ָ���˿ڣ�9999 + NodeID��
+    // 3. Bind socket to specified port
     bzero((char *)&serveraddr, sizeof(serveraddr));
     serveraddr.sin_family = AF_INET;
-    serveraddr.sin_addr.s_addr = htonl(INADDR_ANY);  // ������������
+    serveraddr.sin_addr.s_addr = htonl(INADDR_ANY);  // Listen on all interfaces
     serveraddr.sin_port = htons((unsigned short)port);
 
 
@@ -267,7 +182,7 @@ void dsm_start_daemon(int port) {
         return;
     }
 
-    // 4. ��ʼ����
+    // 4. Start listening
     if (listen(listenfd, 1024) < 0) {
         perror("[DSM Daemon] listen failed");
         close(listenfd);
@@ -276,19 +191,19 @@ void dsm_start_daemon(int port) {
 
     std::cout << "[DSM Daemon] Listening on port " << port << "..." << std::endl;
 
-    // 5. ѭ����������
+    // 5. Accept incoming connections in a loop
     while (1) {
         clientlen = sizeof(clientaddr);
         connfd = accept(listenfd, (struct sockaddr *)&clientaddr, &clientlen);
         if (connfd < 0) {
-            continue;  // accept �������ź��жϣ���������
+            continue;  // accept failed, retry
         }
 
-        // 6. Ϊÿ���������������̴߳���
-        //    connfd ��һ��������˫��ͨ��ͨ����
-        //    - �߳̿��Դ��� read() ������Ϣ
-        //    - �߳̿������� write() ���ͻظ�
+        // 6. Create a new thread for each accepted connection
+        //    connfd is a bidirectional communication channel
+        //    - The thread uses read() to receive messages
+        //    - The thread uses write() to send messages
         std::thread t(peer_handler, connfd);
-        t.detach();  // �����̣߳������Լ�����
+        t.detach();  // Detach the thread to allow independent execution
     }
 }
