@@ -21,6 +21,9 @@
  */
 void process_join_req(int sock, const dsm_header_t& head) {
 
+    if(dsm_getnodeid() != 0) {
+        return;
+    }
 
     // 1. 构造回复 (ACK) 只回复头
     dsm_header_t ack_head = {0};

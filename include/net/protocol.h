@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <sys/types.h>
+#include <vector>
 
 #if defined(__cplusplus)
 extern "C" {
@@ -11,18 +12,18 @@ extern "C" {
 
 
 #define DSM_PAGE_SIZE 4096
-//������������Ҫ�������� ���ļ��еĺ�����ȫ����caspp page 630-631
+//！！！！！重要！！！！ 本文件中的函数完全来自caspp page 630-631
 
 /* Constants ------------------------------------------------------------- */
-#define RIO_BUFSIZE 8192  /* rio��������С */
+#define RIO_BUFSIZE 8192  /* rio缓冲区大小 */
 /* Enumerations ---------------------------------------------------------- */
 
 /* Structures ------------------------------------------------------------ */
 typedef struct {
-    int rio_fd;                /* ������ */
-    int rio_cnt;               /* δ���ֽ��� */
-    char *rio_bufptr;          /* ��һ��δ���ֽڵ�ָ�� */
-    char rio_buf[RIO_BUFSIZE]; /* �ڲ������� */
+    int rio_fd;                /* 描述符 */
+    int rio_cnt;               /* 未读字节数 */
+    char *rio_bufptr;          /* 下一个未读字节的指针 */
+    char rio_buf[RIO_BUFSIZE]; /* 内部缓冲区 */
 } rio_t;
 /* Helpers --------------------------------------------------------------- */
 
@@ -33,42 +34,38 @@ ssize_t rio_readn(rio_t *rp, void *usrbuf, size_t n);
 
 
 
-//���Ĺ淶
+//报文规范
 
 
-// ================= ��Ϣ����ö�� =================
+// ================= 消息类型枚举 =================
 typedef enum {
-<<<<<<< HEAD
-    // 1. ��ʼ���׶�
-    DSM_MSG_JOIN_REQ      = 0x01,  // �½ڵ��������?��Ҫͳ�ƽڵ�����������ID��ȷ����������ַ
-    DSM_MSG_JOIN_ACK      = 0x02,  // Leader����������Ϣ(ID, ��ַ)��Ҳ���Ǻ������ذ���ID�ͻ�ַ����ø��ص��?8�ֽ���ID����8�ֽ��ǻ�ַ��Ĭ�Ϸ���0x4000000000
-=======
-    // 1. ��ʼ���׶�
-    DSM_MSG_JOIN_REQ      = 0x01,  // 
-    DSM_MSG_JOIN_ACK      = 0x02,  // 
->>>>>>> trunk
-
-    // 2. ҳ���������� (����Э��)
-    DSM_MSG_PAGE_REQ      = 0x10,  // A��B����ҳ������
-    DSM_MSG_PAGE_REP      = 0x11,  // ע�⣺B�����ж��Լ���prob owner����real owner,ֻ���ж��Լ���pagetable���Ӧҳ��owner�Ƿ�һ�£�
-                                   // һ�¾ͷ���ҳ�棬���򷵻�ҳ��owner��ID��A�����ҳowner��-1������0�Ž��̵�����
-       
-    // 3. ����������
-    DSM_MSG_LOCK_ACQ      = 0x20,  // ͬ��
-    DSM_MSG_LOCK_REP      = 0x21,  // ͬ��
+    // 1. 同步阶段（init的内部实现也调用了barrier函数）
+    DSM_MSG_JOIN_REQ      = 0x01,  // 同步请求
     
-    // 4. ά����ȷ��
-    DSM_MSG_OWNER_UPDATE  = 0x30,  // ��֪Manager����Ȩ�ѱ�����?������λ����ҳ/��
-    DSM_MSG_ACK           = 0xFF   // ͨ��ȷ�� (����ͬ��)
+
+    // 2. 页面请求流程 (三跳协议)
+    DSM_MSG_PAGE_REQ      = 0x10,  // A向B发送页面请求
+    DSM_MSG_PAGE_REP      = 0x11,  // 注意：B不会判断自己是prob owner还是real owner,只是判断自己与pagetable里对应页的owner是否一致，
+                                   // 一致就发送页面，否则返回页的owner的ID给A，如果页owner是-1，则向0号进程调数据
+    
+    // 3. 锁请求流程
+    DSM_MSG_LOCK_ACQ      = 0x20,  // A向B发送锁请求
+    DSM_MSG_LOCK_REP      = 0x21,  // B向A返回锁请求，一并返回的还有无效页号
+    DSM_MSG_LOCK_RLS      = 0X22,   // A向B发送锁释放，返回无效页号的list，B会将该list存储在锁表里
+
+    // 4. 维护与确认
+    DSM_MSG_OWNER_UPDATE  = 0x30,  // 告知Manager页表所有权已变更
+
+    DSM_MSG_ACK           = 0xFF   // 通用确认：同步确认，lock release确认，页表更新确认
 } dsm_msg_type_t;
 
-// ================= ͨ��Э��ͷ (12�ֽ�) =================
+// ================= 通用协议头 (12字节) =================
 typedef struct {
     uint8_t  type;           // dsm_msg_type_t
-    uint8_t  unused;         // ����λ (ҳ/���жϣ�realowner/data�жϣ�
-    uint16_t src_node_id;    // ���ͷ�ID (-1/255 ��ʾδ֪)
-    uint32_t seq_num;        // ���к� (��������/����)
-    uint32_t payload_len;    // �������س��� (������ͷ)
+    uint8_t  unused;         // 保留位 （消息复用时的区分）
+    uint16_t src_node_id;    // 发送方ID (-1/255 表示未知)
+    uint32_t seq_num;        // 序列号 (处理乱序/丢包)
+    uint32_t payload_len;    // 后续负载长度 (不含包头)
 } __attribute__((packed)) dsm_header_t;
 
 
@@ -76,74 +73,41 @@ typedef struct {
 
 
 
-// ================= ��ϸ���ض��� (Payloads) =================
-
-// ---------------- A. ��ʼ��ģ�� ----------------
-
-// [DSM_MSG_JOIN_REQ] ��������
-// ���أ�ͨ��Ϊ�գ������������ļ����˿�
-typedef struct {
-    uint16_t listen_port;    // ���� Leader �����ĸ��˿���
-} __attribute__((packed)) payload_join_req_t;
-
-
-// [DSM_MSG_JOIN_ACK]
-typedef struct {
-    uint16_t assigned_node_id;  // ��������˵� ID
-    uint16_t node_count;        // �ܽڵ��� (���� Hash ����)
-    
-} __attribute__((packed)) payload_join_ack_t;
-
-
-// ---------------- B. ҳ�����ģ��? ----------------
-
 // [DSM_MSG_PAGE_REQ] Requestor -> Manager
 typedef struct {
-    uint32_t page_index;        // ������?��ҳ��
+    uint32_t page_index;        // 请求的全局页号
 } __attribute__((packed)) payload_page_req_t;
 
-// [DSM_MSG_PAGE_REP] Manager -> RealOwner
-// ���壺"Node X ��Ҫ page_index�����������⣬�㷢����"
+// [DSM_MSG_PAGE_REP] Manager -> Requestor
 typedef struct {
-    uint32_t page_index;        // ҳ��
-    uint16_t requester_id;      // ������Ҫ���ݵĽڵ�ID (RealOwnerҪ�����ݷ�����)
+    uint16_t real_owner_id;
+    char pagedata[DSM_PAGE_SIZE]
 } __attribute__((packed)) payload_page_rep_t;
 
-// [DSM_MSG_PAGE_DATA] RealOwner -> Requestor
-// ������?������Ҫ struct ���壬ֱ�� Header + 4096�ֽ�����
-// ������?Ԫ���ݣ������� unused �ֶ�
-
-
-// ---------------- C. ������ģ�� ----------------
-
-// [DSM_MSG_LOCK_ACQ] / [DSM_MSG_LOCK_REL] Requestor -> Manager
+// [DSM_MSG_LOCK_ACQ]  Requestor -> Manager
 typedef struct {
-    uint32_t lock_id;           // �� ID
+    uint32_t lock_id;           // 锁 ID
 } __attribute__((packed)) payload_lock_req_t;
 
-// [DSM_MSG_LOCK_REP] Manager -> Requestor (������)
+// [DSM_MSG_LOCK_REP] Manager -> Requestor (授予锁)
 typedef struct {
-    uint32_t lock_id;
-    uint32_t invalid_set_count; // Scope Consistency: ��ҪʧЧ��ҳ����
-    // �����ź��������? invalid_set �б�
-    uint32_t realowner;
-
+    uint32_t invalid_set_count; // Scope Consistency: 需要失效的页数量
+    vector invalid_page_list;
 } __attribute__((packed)) payload_lock_rep_t;
 
-
-// ---------------- D. ά����ȷ�� ----------------
+// [DSM_MSG_LOCK_RLS] LockOwner -> Manager (释放锁)
+typedef struct {
+    uint32_t invalid_set_count; // Scope Consistency: 需要失效的页数量
+    vector invalid_page_list;
+} __attribute__((packed)) payload_lock_rls_t;
 
 // [DSM_MSG_OWNER_UPDATE] RealOwner -> Manager
 typedef struct {
-    uint32_t resource_id;    // ҳ�Ż���ID
-    uint16_t new_owner_id;   // ��Դ���ڹ�˭��
+    uint32_t resource_id;    // 页号
+    uint16_t new_owner_id;   // 页面最新副本在哪里
 } __attribute__((packed)) payload_owner_update_t;
 
-// [DSM_MSG_ACK]
-typedef struct {
-    uint32_t target_seq;     // ȷ���Ƕ��ĸ�����Ļ��?
-    uint8_t  status;         // 0=OK, 1=Fail
-} __attribute__((packed)) payload_ack_t;
+
 
 
 #if defined(__cplusplus)
