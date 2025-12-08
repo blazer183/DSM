@@ -302,8 +302,6 @@ int dsm_init(int dsm_memsize)
         return -2;
     if (!InitDataStructs(dsm_memsize))
         return -3;
-    if(!dsm_barrier())
-        return -4;
     return 0;
 }
 
@@ -312,7 +310,7 @@ int dsm_getpodid(void){
 }
 
 int dsm_finalize(void){
-    return dsm_barrier();
+    return 1;
 }
 
 int dsm_mutex_init(){
@@ -320,6 +318,8 @@ int dsm_mutex_init(){
         return -1;
 
     LockTable->LockAcquire();
+    //检查是否有该锁，因为有可能别的进程先进行到这一步，然后请求锁，把锁请求走了。
+    //监听线程行为是只要有锁请求就先创建锁再授予，所以有可能已经有锁了，但是监听线程创建的
     LockTable->Insert(++LockNum, LockRecord());
     LockTable->LockRelease();
     return LockNum;
@@ -339,10 +339,13 @@ int dsm_mutex_lock(int *mutex){
     if (mutex == nullptr || SocketTable == nullptr || LockTable == nullptr)
         return -1;
 
-    const int lockid = *mutex;
-    
-    int lockprobowner = lockid % ProcNum;
+    /*
+    pseudo code:
+    use mprotect to set all shared pages as invalid
+    */
 
+    const int lockid = *mutex;
+    int lockprobowner = lockid % ProcNum;
     // Get or create socket connection to the probable owner
     std::string target_ip = GetPodIp(lockprobowner);
     int target_port = GetPodPort(lockprobowner);
@@ -528,12 +531,12 @@ int dsm_mutex_unlock(int *mutex){
     return 0;
 }
 
-void dsm_bind(void *addr, const char *name){
+void dsm_bind(void *addr, const char *name, size_t element_size){
     if (BindTable == nullptr || addr == nullptr || name == nullptr)
         return;
 
     BindTable->LockAcquire();
-    BindTable->Insert(addr, BindRecord{addr, std::string(name)});
+    BindTable->Insert(addr, BindRecord{addr, element_size, std::string(name)});
     BindTable->LockRelease();
 }
 

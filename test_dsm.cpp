@@ -5,75 +5,52 @@
 
 #include "dsm.h"
 
-int main()
-{
-    std::cout << "\n========== DSM client test ==========" << std::endl;
-    std::cout << "========================================\n" << std::endl;
-    
-
-    
-    int memsize = 4096;  // 4KB shared memory
-    int result = dsm_init(memsize);
-    
-    if (result != 0) {
-        std::cerr << "ERROR: dsm_init() failed, return value: " << result << std::endl;
-        std::cerr << "  Possible causes:" << std::endl;
-        std::cerr << "    - Environment variables not set correctly" << std::endl;
-        std::cerr << "    - Leader not started or cannot connect" << std::endl;
-        std::cerr << "    - daemon thread failed to handle JOIN_REQ correctly" << std::endl;
-        return 1;
-    }
-    
-    std::cout << "SUCCESS: dsm_init() completed successfully!" << std::endl;
-    std::cout <<  std::endl;
-    
-    // ============ 2. Verify DSM initialization state ============
-    std::cout << "[Step 2] Verifying DSM initialization state..." << std::endl;
-    
-    int pod_id = dsm_getpodid();
-    std::cout << "  Current pod ID: " << pod_id << std::endl;
-
-    if (pod_id < 0) {
-        std::cerr << "ERROR: Failed to get PodID" << std::endl;
-        return 1;
-    }
-    std::cout << "SUCCESS: PodID retrieved successfully" << std::endl;
-    std::cout << std::endl;
-    
-    // ============ 3. Test shared memory address mapping ============
-    std::cout << "[Step 3] Testing GetPodIp/GetPodPort address mapping..." << std::endl;
-    
-#ifdef UNITEST
-    // If UNITEST is defined, we can call internal functions
+void cluster_config(){
+    std::cout << "[System information] Cluster configuration:" << std::endl;
     for (int pod_id = 0; pod_id < ProcNum; pod_id++) {
         std::string ip = GetPodIp(pod_id);
         int port = GetPodPort(pod_id);
         std::cout << "  PodID=" << pod_id << " -> " << ip << ":" << port << std::endl;
     }
-    std::cout << "SUCCESS: Address mapping verification completed" << std::endl;
-#else
-    std::cout << "  INFO: Requires -DUNITEST compilation flag to test internal functions" << std::endl;
-    std::cout << "  Skipping this test" << std::endl;
-#endif
-    std::cout << std::endl;
+}
+
+int main(){
+    std::cout << "========== DSM: Sum of array test ==========" << std::endl;
     
-    // ============ 4. test lock/unlock ============
-    std::cout << "[Step 4] verify lock aquire..." << std::endl;
+    int memsize = PAGESIZE + sizeof(int);  
+    int result = dsm_init(memsize);   
+    if (result != 0) {
+        std::cerr << "[System information] ERROR: dsm_init() failed, return value: " << result << std::endl;
+        return 1;
+    }else{
+        std::cout << "[System information] SUCCESS: dsm_init() completed successfully!" << std::endl;
+    }
+
+    dsm_barrier();
+
+    cluster_config();
+    
+    int myrank = dsm_getpodid();
+    int elen = PAGESIZE / sizeof(int);
+    int *Ar = (int *) dsm_malloc(elen * sizeof(int));     //分配
+    int *sum = (int *)dsm_malloc(sizeof(int));
+    dsm_bind(Ar, "$HOME/dsm/array", sizeof(int));                         //绑定数据源
+    dsm_bind(sum, "$HOME/dsm/sum", sizeof(int));
+
     int lock_A = dsm_mutex_init();
+
     dsm_mutex_lock(&lock_A);
-    std::cout<<"I'm "<< pod_id <<" and I get lock_A!"<<std::endl;
-    sleep(0.5);
-    std::cout << "See? No one can get lock_A because I locked it!..." << std::endl;
+    for(int i = 0; i < elen; i+=ProcNum)
+        (*sum) = (*sum) + Ar[i];
     dsm_mutex_unlock(&lock_A);
 
-    // ============ 5. Clean up and exit ============
-    std::cout << "[Step 5] Cleaning up resources and exiting..." << std::endl;
+    dsm_barrier();
+    
+    if(myrank == 0){
+        std::cout << "The sum of array Ar is " << (*sum) << std::endl;
+    }
+    std::cout << "[System information] Program terminated normally" << std::endl;
+
     dsm_finalize();
-    
-    std::cout << "INFO: Program terminated normally" << std::endl;
-    std::cout << "\n========================================" << std::endl;
-    std::cout << "SUCCESS: All tests passed! DSM system running normally" << std::endl;
-    std::cout << "========================================\n" << std::endl;
-    
     return 0;
 }

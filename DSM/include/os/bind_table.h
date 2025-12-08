@@ -14,6 +14,7 @@ struct BindRecord {
         : base(addr), file(std::move(file_path)) {}
 
     void *base {nullptr};
+    size_t element_size {0};
     std::string file;
 };
 

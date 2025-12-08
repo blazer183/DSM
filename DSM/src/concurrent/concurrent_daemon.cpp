@@ -30,6 +30,7 @@ static bool handle_join_request(int connfd, const dsm_header_t &header);
 static bool handle_lock_acquire(int connfd, const dsm_header_t &header, rio_t &rp);
 static bool handle_lock_release(int connfd, const dsm_header_t &header, rio_t &rp);
 static bool handle_owner_update(int connfd, const dsm_header_t &header, rio_t &rp);
+static bool handle_page_require(int connfd, const dsm_header_t &header, rio_t &rp);
 static bool handle_unknown_message(int connfd, const dsm_header_t &header);
 
 
@@ -213,53 +214,15 @@ static bool handle_lock_acquire(int connfd, const dsm_header_t &header, rio_t &r
 }
 
 static bool handle_owner_update(int connfd, const dsm_header_t &header, rio_t &rp) {
-    // Read the payload
-    uint32_t payload_len = ntohl(header.payload_len);
-    if (payload_len < sizeof(payload_owner_update_t)) {
-        std::cerr << "[DSM Daemon] Invalid OWNER_UPDATE payload length" << std::endl;
-        return false;
-    }
-
-    payload_owner_update_t update_payload;
-    if (rio_readn(&rp, &update_payload, sizeof(update_payload)) != sizeof(update_payload)) {
-        std::cerr << "[DSM Daemon] Failed to read OWNER_UPDATE payload" << std::endl;
-        return false;
-    }
-
-    uint32_t resource_id = ntohl(update_payload.resource_id);
-    uint16_t new_owner_id = ntohs(update_payload.new_owner_id);
-    uint16_t src_node = ntohs(header.src_node_id);
-    uint32_t seq_num = ntohl(header.seq_num);
-
-    std::cout << "[DSM Daemon] Received OWNER_UPDATE: page " << resource_id 
-              << " new owner=" << new_owner_id << " from NodeId=" << src_node << std::endl;
-
-    // Update PageTable
-    PageTable->LockAcquire();
-    
-    // For now, we'll just acknowledge the update
-    // In a full implementation, we would update the PageTable entry for this page
-    // PageTable->Update(resource_id, new_page_record);
-    
-    PageTable->LockRelease();
-
-    // Send ACK
-    dsm_header_t ack = {
-        DSM_MSG_ACK,
-        0,
-        htons(PodId),
-        htonl(seq_num),
-        0
-    };
-    
-    if (::send(connfd, &ack, sizeof(ack), 0) != sizeof(ack)) {
-        std::cerr << "[DSM Daemon] Failed to send ACK for OWNER_UPDATE" << std::endl;
-        return false;
-    }
-
-    std::cout << "[DSM Daemon] Sent ACK for OWNER_UPDATE" << std::endl;
-
-    return true;
+    /*
+        read information from head/payload
+        page_index = payload.page_index
+        new_owner = payload.new_owner
+        PageTable LockAquire()//全局
+        change page record.owner = new_owner
+        PageTable LockRelease()//全局
+        PageTable unlock(page_index) //局部
+    */
 }
 
 static bool handle_lock_release(int connfd, const dsm_header_t &header, rio_t &rp) {
@@ -357,7 +320,31 @@ static bool handle_unknown_message(int connfd, const dsm_header_t &header) {
     return false;
 }
 
+static bool handle_page_require(int connfd, const dsm_header_t &header, rio_t &rp) {
+    /*
+        read information from head/payload
+        page_indes = payload.page_index
 
+        PageTable lock(page_index) //局部
+        //get page record
+        if (record.realowner == PodId){
+            send page immediately
+        }else if(record.realowner == -1 && PodId == 0){
+            //first load
+            look up bind table and load the coorresponding file
+            return page
+        }else if(record.realowner == -1 && PodId != 0){
+            //not first load
+            send owner request to Pod 0
+            wait for page data
+            return page data
+        }else{
+            return pagerecord.realowner
+            return 
+        }
+    
+    */
+}
 
 void peer_handler(int connfd) {
     rio_t rp;
@@ -394,6 +381,9 @@ void peer_handler(int connfd) {
             case DSM_MSG_OWNER_UPDATE:
                 keep_processing = handle_owner_update(connfd, header, rp);
                 break;
+            case DSM_MSG_PAGE_REQ:
+                keep_processing = handle_page_require(connfd, header, rp);
+                break;
             default:
                 keep_processing = handle_unknown_message(connfd, header);
                 break;
@@ -405,7 +395,7 @@ void peer_handler(int connfd) {
     }
 }
 
-// Daemon listener thread
+
 void dsm_start_daemon(int port) {
     int listenfd, connfd;
     struct sockaddr_in clientaddr;
@@ -466,11 +456,7 @@ void dsm_start_daemon(int port) {
             continue;  // accept failed, retry
         }
 
-        // 6. Create a new thread for each accepted connection
-        //    connfd is a bidirectional communication channel
-        //    - The thread uses read() to receive messages
-        //    - The thread uses write() to send messages
         std::thread t(peer_handler, connfd);
-        t.detach();  // Detach the thread to allow independent execution
+        t.detach();  
     }
 }
