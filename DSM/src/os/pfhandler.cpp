@@ -126,10 +126,7 @@ void pull_remote_page(uintptr_t page_base){
         std::string target_ip = GetPodIp(probowner);
         int target_port = GetPodPort(probowner);
         
-        int sock = -1;
-        // Use getsocket to get or create connection
-        extern int getsocket(const std::string& ip, int port);
-        sock = getsocket(target_ip, target_port);
+        int sock = getsocket(target_ip, target_port);
         
         if (sock < 0) {
             std::cerr << "[pull_remote_page] Failed to connect to " << target_ip << ":" << target_port << std::endl;
@@ -215,16 +212,24 @@ void pull_remote_page(uintptr_t page_base){
                 continue;
             }
             
-            // Read page data directly to the page base address
-            char page_buffer[DSM_PAGE_SIZE];
+            // Read page data directly using dynamic allocation
+            char* page_buffer = new (std::nothrow) char[DSM_PAGE_SIZE];
+            if (page_buffer == nullptr) {
+                std::cerr << "[pull_remote_page] Failed to allocate page buffer" << std::endl;
+                retry_count++;
+                continue;
+            }
+            
             if (rio_readn(&rio, page_buffer, DSM_PAGE_SIZE) != DSM_PAGE_SIZE) {
                 std::cerr << "[pull_remote_page] Failed to read page data" << std::endl;
+                delete[] page_buffer;
                 retry_count++;
                 continue;
             }
             
             // Copy page data to the memory location (DMA simulation)
             std::memcpy((void*)page_base, page_buffer, DSM_PAGE_SIZE);
+            delete[] page_buffer;
             
             // Send OWNER_UPDATE to the manager (probowner based on page_index % ProcNum)
             int manager_id = page_index % ProcNum;

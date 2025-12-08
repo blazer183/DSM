@@ -578,7 +578,7 @@ static bool handle_page_require(int connfd, const dsm_header_t &header, rio_t &r
             0,  // unused=0: redirect to real owner
             htons(PodId),
             htonl(seq_num),
-            htonl(sizeof(uint16_t) + DSM_PAGE_SIZE)
+            htonl(sizeof(uint16_t))  // Only sending real_owner_id, no page data
         };
         
         if (::send(connfd, &rep_header, sizeof(rep_header), 0) != sizeof(rep_header)) {
@@ -594,11 +594,6 @@ static bool handle_page_require(int connfd, const dsm_header_t &header, rio_t &r
             PageTable->UnlockPage(page_addr);
             return false;
         }
-        
-        // Send dummy page data (will be ignored by requester)
-        char dummy_buffer[DSM_PAGE_SIZE];
-        std::memset(dummy_buffer, 0, DSM_PAGE_SIZE);
-        ::send(connfd, dummy_buffer, DSM_PAGE_SIZE, 0);
         
         PageTable->UnlockPage(page_addr);
         return true;
