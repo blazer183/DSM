@@ -339,14 +339,9 @@ int dsm_mutex_lock(int *mutex){
     if (mutex == nullptr || SocketTable == nullptr || LockTable == nullptr)
         return -1;
 
-    // Use mprotect to set all shared pages as invalid (PROT_NONE)
-    // This ensures that any access to shared memory will trigger a page fault
-    if (SharedAddrBase != nullptr && SharedPages > 0) {
-        if (mprotect(SharedAddrBase, SharedPages * DSM_PAGE_SIZE, PROT_NONE) == -1) {
-            std::cerr << "[dsm_mutex_lock] mprotect failed: " << std::strerror(errno) << std::endl;
-            // Continue anyway, as this is not critical for basic functionality
-        }
-    }
+    // Note: Page invalidation via mprotect should be done for pages
+    // returned in the invalid_page_list from LOCK_REP, not all pages.
+    // For now, we skip mprotect and rely on InvalidPages array marking.
 
     const int lockid = *mutex;
     int lockprobowner = lockid % ProcNum;

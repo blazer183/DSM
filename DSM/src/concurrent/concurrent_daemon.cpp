@@ -550,6 +550,14 @@ static bool handle_page_require(int connfd, const dsm_header_t &header, rio_t &r
         char page_buffer[DSM_PAGE_SIZE];
         std::memset(page_buffer, 0, DSM_PAGE_SIZE);
         
+        // Update PageTable to mark ourselves as owner
+        PageTable->LockAcquire();
+        PageRecord* rec = PageTable->Find(page_addr);
+        if (rec != nullptr) {
+            rec->owner_id = 0;  // Mark Pod 0 as owner
+        }
+        PageTable->LockRelease();
+        
         // Send page data
         dsm_header_t rep_header = {
             DSM_MSG_PAGE_REP,
