@@ -214,15 +214,71 @@ static bool handle_lock_acquire(int connfd, const dsm_header_t &header, rio_t &r
 }
 
 static bool handle_owner_update(int connfd, const dsm_header_t &header, rio_t &rp) {
-    /*
-        read information from head/payload
-        page_index = payload.page_index
-        new_owner = payload.new_owner
-        PageTable LockAquire()//全局
-        change page record.owner = new_owner
-        PageTable LockRelease()//全局
-        PageTable unlock(page_index) //局部
-    */
+    // Read payload to get page_index and new_owner_id
+    uint32_t payload_len = ntohl(header.payload_len);
+    if (payload_len < sizeof(payload_owner_update_t)) {
+        std::cerr << "[DSM Daemon] Invalid OWNER_UPDATE payload length" << std::endl;
+        return false;
+    }
+    
+    payload_owner_update_t update_payload;
+    if (rio_readn(&rp, &update_payload, sizeof(update_payload)) != sizeof(update_payload)) {
+        std::cerr << "[DSM Daemon] Failed to read OWNER_UPDATE payload" << std::endl;
+        return false;
+    }
+    
+    uint32_t page_index = ntohl(update_payload.resource_id);
+    uint16_t new_owner = ntohs(update_payload.new_owner_id);
+    uint32_t seq_num = ntohl(header.seq_num);
+    
+    std::cout << "[DSM Daemon] Received OWNER_UPDATE for page " << page_index 
+              << ", new owner: NodeId=" << new_owner << std::endl;
+    
+    // Calculate page address
+    uintptr_t page_addr = (uintptr_t)SharedAddrBase + page_index * PAGESIZE;
+    
+    // Lock the page for exclusive access
+    if (!PageTable->LockPage(page_addr)) {
+        std::cerr << "[DSM Daemon] Failed to lock page " << page_index << std::endl;
+        return false;
+    }
+    
+    // Update page table with new owner
+    PageTable->LockAcquire();
+    
+    PageRecord* record = PageTable->Find(page_addr);
+    if (record == nullptr) {
+        // Create new record
+        PageRecord new_record;
+        new_record.owner_id = new_owner;
+        PageTable->Insert(page_addr, new_record);
+    } else {
+        // Update existing record
+        record->owner_id = new_owner;
+    }
+    
+    PageTable->LockRelease();
+    
+    // Unlock the page
+    PageTable->UnlockPage(page_addr);
+    
+    std::cout << "[DSM Daemon] Updated owner of page " << page_index << " to NodeId=" << new_owner << std::endl;
+    
+    // Send ACK back to sender
+    dsm_header_t ack = {
+        DSM_MSG_ACK,
+        0,
+        htons(PodId),
+        htonl(seq_num),
+        0
+    };
+    
+    if (::send(connfd, &ack, sizeof(ack), 0) != sizeof(ack)) {
+        std::cerr << "[DSM Daemon] Failed to send ACK for OWNER_UPDATE" << std::endl;
+        return false;
+    }
+    
+    return true;
 }
 
 static bool handle_lock_release(int connfd, const dsm_header_t &header, rio_t &rp) {
@@ -321,29 +377,232 @@ static bool handle_unknown_message(int connfd, const dsm_header_t &header) {
 }
 
 static bool handle_page_require(int connfd, const dsm_header_t &header, rio_t &rp) {
-    /*
-        read information from head/payload
-        page_indes = payload.page_index
-
-        PageTable lock(page_index) //局部
-        //get page record
-        if (record.realowner == PodId){
-            send page immediately
-        }else if(record.realowner == -1 && PodId == 0){
-            //first load
-            look up bind table and load the coorresponding file
-            return page
-        }else if(record.realowner == -1 && PodId != 0){
-            //not first load
-            send owner request to Pod 0
-            wait for page data
-            return page data
-        }else{
-            return pagerecord.realowner
-            return 
-        }
+    // Read payload to get page_index
+    uint32_t payload_len = ntohl(header.payload_len);
+    if (payload_len < sizeof(payload_page_req_t)) {
+        std::cerr << "[DSM Daemon] Invalid PAGE_REQ payload length" << std::endl;
+        return false;
+    }
     
-    */
+    payload_page_req_t req_payload;
+    if (rio_readn(&rp, &req_payload, sizeof(req_payload)) != sizeof(req_payload)) {
+        std::cerr << "[DSM Daemon] Failed to read PAGE_REQ payload" << std::endl;
+        return false;
+    }
+    
+    uint32_t page_index = ntohl(req_payload.page_index);
+    uint16_t requester_id = ntohs(header.src_node_id);
+    uint32_t seq_num = ntohl(header.seq_num);
+    
+    std::cout << "[DSM Daemon] Received PAGE_REQ for page " << page_index 
+              << " from NodeId=" << requester_id << std::endl;
+    
+    // Lock the page to ensure sequential access
+    uintptr_t page_addr = (uintptr_t)SharedAddrBase + page_index * PAGESIZE;
+    if (!PageTable->LockPage(page_addr)) {
+        std::cerr << "[DSM Daemon] Failed to lock page " << page_index << std::endl;
+        return false;
+    }
+    
+    // Get page record
+    PageTable->LockAcquire();
+    PageRecord* record = PageTable->Find(page_addr);
+    if (record == nullptr) {
+        // Create new record with owner_id = -1 (first access)
+        PageRecord new_record;
+        new_record.owner_id = -1;
+        PageTable->Insert(page_addr, new_record);
+        record = PageTable->Find(page_addr);
+    }
+    
+    int owner_id = record ? record->owner_id : -1;
+    PageTable->LockRelease();
+    
+    // Case 1: We are the real owner (owner_id == PodId)
+    if (owner_id == PodId) {
+        std::cout << "[DSM Daemon] We are the owner of page " << page_index << ", sending page data" << std::endl;
+        
+        // Send page data
+        dsm_header_t rep_header = {
+            DSM_MSG_PAGE_REP,
+            1,  // unused=1: we have the page data
+            htons(PodId),
+            htonl(seq_num),
+            htonl(sizeof(uint16_t) + DSM_PAGE_SIZE)
+        };
+        
+        if (::send(connfd, &rep_header, sizeof(rep_header), 0) != sizeof(rep_header)) {
+            std::cerr << "[DSM Daemon] Failed to send PAGE_REP header" << std::endl;
+            PageTable->UnlockPage(page_addr);
+            return false;
+        }
+        
+        // Send real_owner_id (ourselves)
+        uint16_t real_owner_net = htons(PodId);
+        if (::send(connfd, &real_owner_net, sizeof(real_owner_net), 0) != sizeof(real_owner_net)) {
+            std::cerr << "[DSM Daemon] Failed to send real_owner_id" << std::endl;
+            PageTable->UnlockPage(page_addr);
+            return false;
+        }
+        
+        // Send page data
+        if (::send(connfd, (void*)page_addr, DSM_PAGE_SIZE, 0) != DSM_PAGE_SIZE) {
+            std::cerr << "[DSM Daemon] Failed to send page data" << std::endl;
+            PageTable->UnlockPage(page_addr);
+            return false;
+        }
+        
+        PageTable->UnlockPage(page_addr);
+        return true;
+    }
+    // Case 2: First access and we are not Pod 0 (owner_id == -1 && PodId != 0)
+    else if (owner_id == -1 && PodId != 0) {
+        std::cout << "[DSM Daemon] First access, requesting page from Pod 0" << std::endl;
+        
+        // Forward request to Pod 0
+        std::string pod0_ip = GetPodIp(0);
+        int pod0_port = GetPodPort(0);
+        
+        int pod0_sock = socket(AF_INET, SOCK_STREAM, 0);
+        if (pod0_sock < 0) {
+            std::cerr << "[DSM Daemon] Failed to create socket for Pod 0" << std::endl;
+            PageTable->UnlockPage(page_addr);
+            return false;
+        }
+        
+        struct sockaddr_in server_addr;
+        std::memset(&server_addr, 0, sizeof(server_addr));
+        server_addr.sin_family = AF_INET;
+        server_addr.sin_port = htons(pod0_port);
+        inet_pton(AF_INET, pod0_ip.c_str(), &server_addr.sin_addr);
+        
+        if (connect(pod0_sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+            std::cerr << "[DSM Daemon] Failed to connect to Pod 0" << std::endl;
+            close(pod0_sock);
+            PageTable->UnlockPage(page_addr);
+            return false;
+        }
+        
+        // Send PAGE_REQ to Pod 0
+        dsm_header_t fwd_header = {
+            DSM_MSG_PAGE_REQ,
+            0,
+            htons(PodId),
+            htonl(1),
+            htonl(sizeof(payload_page_req_t))
+        };
+        
+        ::send(pod0_sock, &fwd_header, sizeof(fwd_header), 0);
+        ::send(pod0_sock, &req_payload, sizeof(req_payload), 0);
+        
+        // Receive response from Pod 0
+        rio_t pod0_rio;
+        rio_readinit(&pod0_rio, pod0_sock);
+        
+        dsm_header_t pod0_rep;
+        if (rio_readn(&pod0_rio, &pod0_rep, sizeof(pod0_rep)) != sizeof(pod0_rep)) {
+            std::cerr << "[DSM Daemon] Failed to receive response from Pod 0" << std::endl;
+            close(pod0_sock);
+            PageTable->UnlockPage(page_addr);
+            return false;
+        }
+        
+        // Read page data from Pod 0
+        uint16_t real_owner_id;
+        rio_readn(&pod0_rio, &real_owner_id, sizeof(real_owner_id));
+        
+        char page_buffer[DSM_PAGE_SIZE];
+        if (rio_readn(&pod0_rio, page_buffer, DSM_PAGE_SIZE) != DSM_PAGE_SIZE) {
+            std::cerr << "[DSM Daemon] Failed to read page data from Pod 0" << std::endl;
+            close(pod0_sock);
+            PageTable->UnlockPage(page_addr);
+            return false;
+        }
+        
+        close(pod0_sock);
+        
+        // Forward page data to requester
+        dsm_header_t rep_header = {
+            DSM_MSG_PAGE_REP,
+            1,  // unused=1: we have the page data
+            htons(PodId),
+            htonl(seq_num),
+            htonl(sizeof(uint16_t) + DSM_PAGE_SIZE)
+        };
+        
+        ::send(connfd, &rep_header, sizeof(rep_header), 0);
+        ::send(connfd, &real_owner_id, sizeof(real_owner_id), 0);
+        ::send(connfd, page_buffer, DSM_PAGE_SIZE, 0);
+        
+        PageTable->UnlockPage(page_addr);
+        return true;
+    }
+    // Case 3: First access and we are Pod 0 (owner_id == -1 && PodId == 0)
+    else if (owner_id == -1 && PodId == 0) {
+        std::cout << "[DSM Daemon] First access on Pod 0, loading from bind table" << std::endl;
+        
+        // Look up bind table to find the file
+        BindTable->LockAcquire();
+        BindRecord* bind_rec = BindTable->Find((void*)page_addr);
+        BindTable->LockRelease();
+        
+        // For now, just send zero-filled page (bind table lookup not fully implemented)
+        char page_buffer[DSM_PAGE_SIZE];
+        std::memset(page_buffer, 0, DSM_PAGE_SIZE);
+        
+        // Send page data
+        dsm_header_t rep_header = {
+            DSM_MSG_PAGE_REP,
+            1,  // unused=1: we have the page data
+            htons(PodId),
+            htonl(seq_num),
+            htonl(sizeof(uint16_t) + DSM_PAGE_SIZE)
+        };
+        
+        ::send(connfd, &rep_header, sizeof(rep_header), 0);
+        
+        uint16_t real_owner_net = htons(0);
+        ::send(connfd, &real_owner_net, sizeof(real_owner_net), 0);
+        ::send(connfd, page_buffer, DSM_PAGE_SIZE, 0);
+        
+        PageTable->UnlockPage(page_addr);
+        return true;
+    }
+    // Case 4: We are not the owner (owner_id != PodId and owner_id != -1)
+    else {
+        std::cout << "[DSM Daemon] We are not the owner, redirecting to NodeId=" << owner_id << std::endl;
+        
+        // Return real owner ID to requester
+        dsm_header_t rep_header = {
+            DSM_MSG_PAGE_REP,
+            0,  // unused=0: redirect to real owner
+            htons(PodId),
+            htonl(seq_num),
+            htonl(sizeof(uint16_t) + DSM_PAGE_SIZE)
+        };
+        
+        if (::send(connfd, &rep_header, sizeof(rep_header), 0) != sizeof(rep_header)) {
+            std::cerr << "[DSM Daemon] Failed to send PAGE_REP header (redirect)" << std::endl;
+            PageTable->UnlockPage(page_addr);
+            return false;
+        }
+        
+        // Send real_owner_id
+        uint16_t real_owner_net = htons(owner_id);
+        if (::send(connfd, &real_owner_net, sizeof(real_owner_net), 0) != sizeof(real_owner_net)) {
+            std::cerr << "[DSM Daemon] Failed to send real_owner_id (redirect)" << std::endl;
+            PageTable->UnlockPage(page_addr);
+            return false;
+        }
+        
+        // Send dummy page data (will be ignored by requester)
+        char dummy_buffer[DSM_PAGE_SIZE];
+        std::memset(dummy_buffer, 0, DSM_PAGE_SIZE);
+        ::send(connfd, dummy_buffer, DSM_PAGE_SIZE, 0);
+        
+        PageTable->UnlockPage(page_addr);
+        return true;
+    }
 }
 
 void peer_handler(int connfd) {

@@ -12,6 +12,8 @@ struct BindRecord {
     BindRecord() = default;
     BindRecord(void *addr, std::string file_path)
         : base(addr), file(std::move(file_path)) {}
+    BindRecord(void *addr, size_t elem_size, std::string file_path)
+        : base(addr), element_size(elem_size), file(std::move(file_path)) {}
 
     void *base {nullptr};
     size_t element_size {0};
