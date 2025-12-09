@@ -306,9 +306,6 @@ static bool handle_page_require(int connfd, const dsm_header_t &header, rio_t &r
         return false;
     }
     
-    // Get page record
-
-    
     
     
     // Case 1: We are the real owner (owner_id == PodId)
