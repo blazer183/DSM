@@ -138,12 +138,12 @@ void pull_remote_page(uintptr_t page_base){
         // Get sequence number for this connection
         uint32_t seq_num = 1;
         if (SocketTable != nullptr) {
-            SocketTable->LockAcquire();
+            SocketTable->GlobalMutexLock();
             SocketRecord* record = SocketTable->Find(probowner);
             if (record != nullptr) {
                 seq_num = record->allocate_seq();
             }
-            SocketTable->LockRelease();
+            SocketTable->GlobalMutexUnlock();
         }
         
         // Build and send DSM_MSG_PAGE_REQ
@@ -241,12 +241,12 @@ void pull_remote_page(uintptr_t page_base){
                 // Get sequence number for manager connection
                 uint32_t mgr_seq = 1;
                 if (SocketTable != nullptr) {
-                    SocketTable->LockAcquire();
+                    SocketTable->GlobalMutexLock();
                     SocketRecord* mgr_record = SocketTable->Find(manager_id);
                     if (mgr_record != nullptr) {
                         mgr_seq = mgr_record->allocate_seq();
                     }
-                    SocketTable->LockRelease();
+                    SocketTable->GlobalMutexUnlock();
                 }
                 
                 // Build OWNER_UPDATE message

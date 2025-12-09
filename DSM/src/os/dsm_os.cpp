@@ -23,13 +23,13 @@
 #include "os/socket_table.h"
 #include "os/pfhandler.h"
 
-#ifdef UNITEST
-#define STATIC 
-#else
-#define STATIC static
-#endif
+// 声明来自 dsm_os_cond.cpp 的辅助函数
+extern int getsocket(const std::string& ip, int port);
+extern bool LaunchListenerThread(int Port);
+extern bool FetchGlobalData(int dsm_pagenum, std::string& LeaderNodeIp, int& LeaderNodePort);
+extern bool InitDataStructs(int dsm_pagenum);
 
-extern void dsm_start_daemon(int port);
+// 全局变量定义
 
 struct PageTable *PageTable = nullptr;
 struct LockTable *LockTable = nullptr;
@@ -39,18 +39,22 @@ struct SocketTable *SocketTable = nullptr;
 size_t SharedPages = 0;
 int PodId = -1;
 void *SharedAddrBase = nullptr;
+void * SharedAddrCurrentLoc = nullptr;   // 下一次分配空间（bind）的基址
+int SAB_VPNumber = 0;           //共享区起始虚拟页号
+int SAC_VPNumber = 0;           //共享区下一次分配的空间的虚拟页号
+
+
+
 int ProcNum = 0;
 int WorkerNodeNum = 0;
 std::vector<std::string> WorkerNodeIps;  // worker IP list
 int* InvalidPages = nullptr;            //0: valid, 1: invalid
-int* ValidPages = nullptr;              //0: not valid, 1: valid
-int* DirtyPages = nullptr;              //0: clean, 1: dirty
 
-STATIC std::string LeaderNodeIp;
-STATIC int LeaderNodePort = 0;
-STATIC int LeaderNodeSocket = -1;
-STATIC int LockNum = 0;
-STATIC void * SharedAddrCurrentLoc = nullptr;   // current location in shared memory
+
+std::string LeaderNodeIp;
+int LeaderNodePort = 0;
+int LeaderNodeSocket = -1;
+int LockNum = 0;
 
 
 std::string GetPodIp(int pod_id) {
@@ -78,190 +82,6 @@ int GetPodPort(int pod_id) {
     }
     std::cerr << "[DSM Warning] Invalid PodID " << pod_id << std::endl;
     return -1;
-}
-
-// Helper function to get or create a socket connection to a remote pod
-// Returns existing socket if already connected, creates new connection otherwise
-int getsocket(const std::string& ip, int port) {
-    if (SocketTable == nullptr) {
-        std::cerr << "[getsocket] SocketTable not initialized" << std::endl;
-        return -1;
-    }
-
-    // Check if socket already exists for this target
-    int target_node = -1;
-    for (int i = 0; i < ProcNum; i++) {
-        if (GetPodIp(i) == ip && GetPodPort(i) == port) {
-            target_node = i;
-            break;
-        }
-    }
-
-    if (target_node >= 0) {
-        SocketTable->LockAcquire();
-        SocketRecord* record = SocketTable->Find(target_node);
-        if (record != nullptr && record->socket >= 0) {
-            int existing_sock = record->socket;
-            SocketTable->LockRelease();
-            return existing_sock;
-        }
-        SocketTable->LockRelease();
-    }
-
-    // Create new socket connection
-    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sockfd < 0) {
-        std::cerr << "[getsocket] Failed to create socket: " << std::strerror(errno) << std::endl;
-        return -1;
-    }
-
-    struct sockaddr_in server_addr;
-    std::memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(port);
-
-    if (inet_pton(AF_INET, ip.c_str(), &server_addr.sin_addr) <= 0) {
-        std::cerr << "[getsocket] Invalid address: " << ip << std::endl;
-        close(sockfd);
-        return -1;
-    }
-
-    if (connect(sockfd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-        std::cerr << "[getsocket] Failed to connect to " << ip << ":" << port 
-                  << " - " << std::strerror(errno) << std::endl;
-        close(sockfd);
-        return -1;
-    }
-
-    // Store socket in SocketTable if we identified the target node
-    if (target_node >= 0) {
-        SocketTable->LockAcquire();
-        SocketRecord new_record;
-        new_record.socket = sockfd;
-        new_record.next_seq = 1;
-        SocketTable->Insert(target_node, new_record);
-        SocketTable->LockRelease();
-    }
-
-    return sockfd;
-}
-
-template<typename T>
-bool GetEnvVar(const char* name, T& value, const T& default_val, bool required = true) {
-    const char* env_val = std::getenv(name);
-    if (env_val != nullptr) {
-        if constexpr (std::is_same_v<T, int>) {
-            value = std::atoi(env_val);
-        } else if constexpr (std::is_same_v<T, std::string>) {
-            value = env_val;
-        }
-        std::cout << "[DSM Info] " << name << ": " << value << std::endl;
-        return true;
-    } else {
-        if (required) {
-            std::cerr << "[DSM Warning] " << name << " not set! exit!" << std::endl;
-            return false;
-        } else {
-            value = default_val;
-            std::cerr << "[DSM Warning] " << name << " not set! Using default: " << default_val << std::endl;
-            return true;
-        }
-    }
-}
-
-bool LaunchListenerThread(int Port)
-{
-    try {
-        std::thread listener([Port]() {
-            dsm_start_daemon(Port);
-        });
-        listener.detach();
-        sleep(1);
-        return true;
-    } catch (const std::system_error &err) {
-        std::cerr << "[dsm] failed to launch listener thread: " << err.what() << std::endl;
-        return false;
-    }
-}
-
-bool FetchGlobalData(int dsm_memsize)    
-{
-    SharedPages = static_cast<size_t>(dsm_memsize) / DSM_PAGE_SIZE;
-    SharedAddrBase = reinterpret_cast<void *>(0x4000000000ULL); 
-    SharedAddrCurrentLoc = SharedAddrBase;
-    if (!GetEnvVar("DSM_LEADER_IP", LeaderNodeIp, std::string(""), true)) exit(1);
-    if (!GetEnvVar("DSM_LEADER_PORT", LeaderNodePort, 0, true)) exit(1);
-    if (!GetEnvVar("DSM_TOTAL_PROCESSES", ProcNum, 1, false)) exit(1);
-    if (!GetEnvVar("DSM_POD_ID", PodId, -1, false)) exit(1);
-    if (!GetEnvVar("DSM_WORKER_COUNT", WorkerNodeNum, 0, false)) exit(1);
-    std::string worker_ips_str;
-    if (!GetEnvVar("DSM_WORKER_IPS", worker_ips_str, std::string(""), false)) exit(1);
-    WorkerNodeIps.clear();
-    if (!worker_ips_str.empty()) {
-        std::stringstream ss(worker_ips_str);
-        std::string ip;
-        while (std::getline(ss, ip, ',')) {
-            WorkerNodeIps.push_back(ip);
-        }
-        std::cout << "[DSM Info] Parsed " << WorkerNodeIps.size() << " worker IPs" << std::endl;
-    }
-    const bool ok = (PodId >= 0) && (SharedAddrBase != nullptr) && (SharedPages > 0);
-    if (!ok) {
-        std::cerr << "[dsm] invalid shared region parameters (PodID=" << PodId
-                  << ", base=" << SharedAddrBase << ", pages=" << SharedPages << ")" << std::endl;
-        return false;
-    }
-    return true;
-}
-
-bool InitDataStructs(int dsm_memsize)
-{   
-    // Initialize shared memory region
-    if (SharedAddrBase != nullptr && SharedPages != 0){
-        const size_t total_size = (size_t)dsm_memsize;
-        void* mapped_addr = ::mmap(
-            SharedAddrBase,                    // Desired start address
-            total_size,                        // Size of the mapping
-            PROT_NONE,                        // Initial protection: no access, to trigger page faults
-            MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED,  // Private anonymous mapping, fixed address
-            -1,                               // No file descriptor
-            0                                 // Offset 0
-        );
-        if (mapped_addr == MAP_FAILED) {
-            std::cerr << "[dsm] mmap failed at address " << SharedAddrBase 
-                    << " size " << total_size << ": " << std::strerror(errno) << std::endl;
-            return false;
-        }
-        ValidPages = new int[SharedPages];
-        std::memset(ValidPages, 0, sizeof(int) * SharedPages);
-        DirtyPages = new int[SharedPages];
-        std::memset(DirtyPages, 0, sizeof(int) * SharedPages);
-        InvalidPages = new int[SharedPages];
-        std::memset(InvalidPages, 0, sizeof(int) * SharedPages);
-        install_handler(SharedAddrBase, SharedPages);
-    }else {
-        std::cerr << "[dsm] invalid shared region parameters (base=" << SharedAddrBase 
-                  << ", pages=" << SharedPages << ")" << std::endl;
-        return false;
-    }
-
-
-    // Initialize page, lock, bind, and socket tables
-    if (PageTable == nullptr)
-        PageTable = new (::std::nothrow) class PageTable();
-    if (LockTable == nullptr)
-        LockTable = new (::std::nothrow) class LockTable();
-    if (BindTable == nullptr)
-        BindTable = new (::std::nothrow) class BindTable();
-    if (SocketTable == nullptr)
-        SocketTable = new (::std::nothrow) class SocketTable();
-    const bool ok = (PageTable != nullptr) && (LockTable != nullptr)
-                    && (BindTable != nullptr) && (SocketTable != nullptr);
-    if (!ok){
-        std::cerr << "[dsm] failed to allocate metadata tables" << std::endl;
-        return false;
-    }
-    return true;
 }
 
 bool dsm_barrier()
@@ -294,13 +114,13 @@ bool dsm_barrier()
     return true;
 }
 
-int dsm_init(int dsm_memsize)       
+int dsm_init(int dsm_pagenum)       
 {
-    if (!FetchGlobalData(dsm_memsize))
+    if (!FetchGlobalData(dsm_pagenum, LeaderNodeIp, LeaderNodePort))
         return -1;
-    if(!LaunchListenerThread(LeaderNodePort+PodId))
+    if (!LaunchListenerThread(LeaderNodePort+PodId))
         return -2;
-    if (!InitDataStructs(dsm_memsize))
+    if (!InitDataStructs(dsm_pagenum))
         return -3;
     return 0;
 }
@@ -310,38 +130,40 @@ int dsm_getpodid(void){
 }
 
 int dsm_finalize(void){
+    /*pseudo code:
+    dsm_barrier();
+    kill(all snooping thread)
     return 1;
+    */
+
 }
 
 int dsm_mutex_init(){
-    if (LockTable == nullptr)
-        return -1;
+    /*pseudocode:
 
-    LockTable->LockAcquire();
-    //检查是否有该锁，因为有可能别的进程先进行到这一步，然后请求锁，把锁请求走了。
-    //监听线程行为是只要有锁请求就先创建锁再授予，所以有可能已经有锁了，但是监听线程创建的
-    LockTable->Insert(++LockNum, LockRecord());
-    LockTable->LockRelease();
+    LockTable.GlobalMutexLock();
+    LockNum++;
+    if(key locknum is not locktable) {  
+        //我来解释一下 如果有一个进程比你初始化早并且在你初始化前请求这把锁，这把锁就会被创造并插入。
+        LockTable.Insert(LockNum, LockRecord());
+    }
+    LockTable.GlobalMutexUnlock();
+    
+    */
+    
     return LockNum;
 }
 
 int dsm_mutex_destroy(int *mutex){
-    if (LockTable == nullptr || mutex == nullptr)
-        return -1;
-
-    LockTable->LockAcquire();
-    LockTable->Remove(*mutex);
-    LockTable->LockRelease();
     return 0;
 }
 
 int dsm_mutex_lock(int *mutex){
-    if (mutex == nullptr || SocketTable == nullptr || LockTable == nullptr)
-        return -1;
 
-    // Note: Page invalidation via mprotect should be done for pages
-    // returned in the invalid_page_list from LOCK_REP, not all pages.
-    // For now, we skip mprotect and rely on InvalidPages array marking.
+
+    /*pseudocode:
+    mprotect(all shared space, invalid);
+    */
 
     const int lockid = *mutex;
     int lockprobowner = lockid % ProcNum;
@@ -358,12 +180,12 @@ int dsm_mutex_lock(int *mutex){
 
     // Get sequence number for this connection
     uint32_t seq_num = 1;
-    SocketTable->LockAcquire();
+    SocketTable->GlobalMutexLock();
     SocketRecord* record = SocketTable->Find(lockprobowner);
     if (record != nullptr) {
         seq_num = record->allocate_seq();
     }
-    SocketTable->LockRelease();
+    SocketTable->GlobalMutexUnlock();
 
     // Build and send LOCK_ACQ message
     dsm_header_t req_header = {
@@ -440,8 +262,7 @@ int dsm_mutex_lock(int *mutex){
 }    
 
 int dsm_mutex_unlock(int *mutex){   
-    if (mutex == nullptr || SocketTable == nullptr || LockTable == nullptr)
-        return -1;
+
 
     const int lockid = *mutex;
     int lockprobowner = lockid % ProcNum;
@@ -458,12 +279,12 @@ int dsm_mutex_unlock(int *mutex){
 
     // Get sequence number
     uint32_t seq_num = 1;
-    SocketTable->LockAcquire();
+    SocketTable->GlobalMutexLock();
     SocketRecord* record = SocketTable->Find(lockprobowner);
     if (record != nullptr) {
         seq_num = record->allocate_seq();
     }
-    SocketTable->LockRelease();
+    SocketTable->GlobalMutexUnlock();
 
     // Collect invalid pages from InvalidPages array
     std::vector<uint32_t> invalid_pages;
@@ -477,7 +298,7 @@ int dsm_mutex_unlock(int *mutex){
     }
 
     uint32_t invalid_count = invalid_pages.size();
-    uint32_t payload_len = sizeof(uint32_t) + invalid_count * sizeof(uint32_t);
+    uint32_t payload_len = sizeof(payload_lock_rls_t) + invalid_count * sizeof(uint32_t);
 
     // Build and send LOCK_RLS message
     dsm_header_t req_header = {
@@ -494,10 +315,14 @@ int dsm_mutex_unlock(int *mutex){
         return -1;
     }
 
-    // Send invalid_set_count
-    uint32_t invalid_count_net = htonl(invalid_count);
-    if (::send(sock, &invalid_count_net, sizeof(invalid_count_net), 0) != sizeof(invalid_count_net)) {
-        std::cerr << "[dsm_mutex_unlock] Failed to send invalid_set_count" << std::endl;
+    // Send payload structure (invalid_set_count and lock_id)
+    payload_lock_rls_t rls_payload = {
+        htonl(invalid_count),      // invalid_set_count
+        htonl(lockid)              // lock_id
+    };
+    
+    if (::send(sock, &rls_payload, sizeof(rls_payload), 0) != sizeof(rls_payload)) {
+        std::cerr << "[dsm_mutex_unlock] Failed to send LOCK_RLS payload" << std::endl;
         return -1;
     }
 
@@ -530,23 +355,35 @@ int dsm_mutex_unlock(int *mutex){
     return 0;
 }
 
-void dsm_bind(void *addr, const char *name, size_t element_size){
-    if (BindTable == nullptr || addr == nullptr || name == nullptr)
-        return;
+//集成dsm_bind与dsm_malloc,
+//输入参数：文件路径，未获得的文件元素个数（比如数组大小）
+//返回参数：数组的起始地址
+//目前共享区里的共享数据不支持字符串，对于数字默认int类型，所以返回的元素个数也是sizeof(int)为最小单位
+void* dsm_malloc(const char *name, int * num){
+    if(PodId !=0) return ;
+    /*pseudo code:
+    //打开name指向的文件
+    fd = open(name file);
+    //如果没有文件：报错并返回
+    //预读取文件，判断文件大小
+    int filesize = 文件大小
+    (*num) = filesize/sizeof(int)
+    int pagebasenumber = SAC_VPNumber;  
+    //这里保证按页对齐，所以SharedAddrCurrentLoc一定是某页的页头
+    page_required = filesize/PAGESIZE + ((filesize % PAGESIZE) != 0)    //向上取整，得到这个文件需要分配的空间
+    pagetable.globalmutexlock()
+    for(i = 0; i < pagerequired; i++)
+        record = pagetable.find(i+pagebasenumber)
+        record.filepath = name;
+        record.fd = fd;
+        record.offset = i;
+        PageTable.update(i+pagebasenumber,record)
+    pagetable.globalmutexunlock()
+    SharedAddrCoorrentLoc + = PAGESIZE * pagerequired;  //更新已分配空间
+    SAC_VPNumber += pagerequired; 
+    return  SharedAddrCoorrentLoc - PAGESIZE * pagerequired;
+    */
 
-    BindTable->LockAcquire();
-    BindTable->Insert(addr, BindRecord{addr, element_size, std::string(name)});
-    BindTable->LockRelease();
 }
 
-void *dsm_malloc(size_t size){
-    if ((char*)SharedAddrCurrentLoc + size > (char*)SharedAddrBase + (SharedPages * DSM_PAGE_SIZE)) {
-        return nullptr;
-    }
 
-    void* allocated_ptr = SharedAddrCurrentLoc;
-
-    SharedAddrCurrentLoc = (char*)SharedAddrCurrentLoc + size;
-
-    return allocated_ptr;
-}

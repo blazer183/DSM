@@ -4,7 +4,11 @@ github copilot: 你好！这是你本次任务的任务清单
 
 /docs/AICHITECTURE.md 系统介绍了目录架构，请你先阅读它，并了解报文规范。
 
-你的任务：实现DSM/src/os/pfhandler.cpp中segv_handler和pull_remote_page和dsm_mutex_lock 部分的伪代码,实现concurrent_deamon.cpp中handle_page_require  handle_owner_update伪代码
+你的任务：
+
+实现DSM/src/os/dsm_os_cond.cpp中InitDataStructs() FetchGlobalData()中的伪代码；
+
+实现DSM/src/os/dsm_os.cpp中dsm_malloc(),dsm_mutex_lock(), dsm_mutex_init() dsm_mutex_finalize()中的伪代码；
 
 任务完成条件：在wsl环境下启动DSM/scripts/launcher.sh，分发test_dsm.cpp到多台虚拟机，能够正确返回测试日志，成功启动。 你在测试时需要修改launcher.sh里的IP成你的虚拟机IP，你需要建立多台虚拟机完成测试，测试截图放在README最后。你要解决编译时错误，修改部分源代码和补全监听线程部分。祝你好运！
 

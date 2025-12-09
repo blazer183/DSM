@@ -68,11 +68,6 @@ typedef struct {
     uint32_t payload_len;    // 后续负载长度 (不含包头)
 } __attribute__((packed)) dsm_header_t;
 
-
-
-
-
-
 // [DSM_MSG_PAGE_REQ] Requestor -> Manager
 typedef struct {
     uint32_t page_index;        // 请求的全局页号
@@ -98,6 +93,7 @@ typedef struct {
 // [DSM_MSG_LOCK_RLS] LockOwner -> Manager (释放锁)
 typedef struct {
     uint32_t invalid_set_count; // Scope Consistency: 需要失效的页数量
+    uint32_t lock_id;
     // Note: invalid_page_list follows as array of uint32_t[invalid_set_count]
 } __attribute__((packed)) payload_lock_rls_t;
 

@@ -31,17 +31,22 @@ int main(){
     cluster_config();
     
     int myrank = dsm_getpodid();
-    int elen = PAGESIZE / sizeof(int);
-    int *Ar = (int *) dsm_malloc(elen * sizeof(int));     //分配
-    int *sum = (int *)dsm_malloc(sizeof(int));
-    dsm_bind(Ar, "$HOME/dsm/array", sizeof(int));                         //绑定数据源
-    dsm_bind(sum, "$HOME/dsm/sum", sizeof(int));
+    int elen ;
+    int *Ar = (int *) dsm_malloc("$HOME/dsm/Ar", &elen);     //分配
+    int *sum = (int *) dsm_malloc("$HOME/dsm/sum", nullptr);
+
+    std::cout << "[System information] Pod " << myrank << " allocated and bound memory." << std::endl;
 
     int lock_A = dsm_mutex_init();
+    int S= 0;
 
     dsm_mutex_lock(&lock_A);
     for(int i = 0; i < elen; i+=ProcNum)
-        (*sum) = (*sum) + Ar[i];
+        S += Ar[i];
+    dsm_mutex_unlock(&lock_A);
+
+    dsm_mutex_lock(&lock_A);
+    (*sum) = (*sum) + S;
     dsm_mutex_unlock(&lock_A);
 
     dsm_barrier();
