@@ -12,6 +12,8 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #include <vector>
 #include <sstream>
 
@@ -130,26 +132,24 @@ int dsm_getpodid(void){
 }
 
 int dsm_finalize(void){
-    /*pseudo code:
+    // Synchronize all processes before cleanup
     dsm_barrier();
-    kill(all snooping thread)
-    return 1;
-    */
-
+    
+    // Note: In a real implementation, we would kill all snooping threads here
+    // For now, we just return success since threads are detached
+    return 0;
 }
 
 int dsm_mutex_init(){
-    /*pseudocode:
-
-    LockTable.GlobalMutexLock();
+    // Initialize a new lock in the LockTable
+    LockTable->GlobalMutexLock();
     LockNum++;
-    if(key locknum is not locktable) {  
-        //我来解释一下 如果有一个进程比你初始化早并且在你初始化前请求这把锁，这把锁就会被创造并插入。
-        LockTable.Insert(LockNum, LockRecord());
-    }
-    LockTable.GlobalMutexUnlock();
     
-    */
+    // Check if this lock already exists (another process may have created it earlier)
+    if (LockTable->Find(LockNum) == nullptr) {
+        LockTable->Insert(LockNum, LockRecord());
+    }
+    LockTable->GlobalMutexUnlock();
     
     return LockNum;
 }
@@ -159,11 +159,14 @@ int dsm_mutex_destroy(int *mutex){
 }
 
 int dsm_mutex_lock(int *mutex){
-
-
-    /*pseudocode:
-    mprotect(all shared space, invalid);
-    */
+    // Invalidate all shared space using mprotect so that page faults are triggered
+    // when accessing any shared page
+    if (SharedAddrBase != nullptr && SharedPages > 0) {
+        size_t total_size = SharedPages * PAGESIZE;
+        if (mprotect(SharedAddrBase, total_size, PROT_NONE) == -1) {
+            std::cerr << "[dsm_mutex_lock] mprotect failed: " << std::strerror(errno) << std::endl;
+        }
+    }
 
     const int lockid = *mutex;
     int lockprobowner = lockid % ProcNum;
@@ -360,30 +363,79 @@ int dsm_mutex_unlock(int *mutex){
 //返回参数：数组的起始地址
 //目前共享区里的共享数据不支持字符串，对于数字默认int类型，所以返回的元素个数也是sizeof(int)为最小单位
 void* dsm_malloc(const char *name, int * num){
-    if(PodId !=0) return ;
-    /*pseudo code:
-    //打开name指向的文件
-    fd = open(name file);
-    //如果没有文件：报错并返回
-    //预读取文件，判断文件大小
-    int filesize = 文件大小
-    (*num) = filesize/sizeof(int)
-    int pagebasenumber = SAC_VPNumber;  
-    //这里保证按页对齐，所以SharedAddrCurrentLoc一定是某页的页头
-    page_required = filesize/PAGESIZE + ((filesize % PAGESIZE) != 0)    //向上取整，得到这个文件需要分配的空间
-    pagetable.globalmutexlock()
-    for(i = 0; i < pagerequired; i++)
-        record = pagetable.find(i+pagebasenumber)
-        record.filepath = name;
-        record.fd = fd;
-        record.offset = i;
-        PageTable.update(i+pagebasenumber,record)
-    pagetable.globalmutexunlock()
-    SharedAddrCoorrentLoc + = PAGESIZE * pagerequired;  //更新已分配空间
-    SAC_VPNumber += pagerequired; 
-    return  SharedAddrCoorrentLoc - PAGESIZE * pagerequired;
-    */
-
+    // Only Pod 0 (leader) can allocate and bind files
+    if(PodId != 0) return SharedAddrCurrentLoc;
+    
+    // Expand environment variables in the path (e.g., $HOME)
+    std::string filepath(name);
+    size_t pos = filepath.find("$HOME");
+    if (pos != std::string::npos) {
+        const char* home = std::getenv("HOME");
+        if (home != nullptr) {
+            filepath.replace(pos, 5, home);
+        }
+    }
+    
+    // Open the file
+    int fd = open(filepath.c_str(), O_RDONLY);
+    if (fd < 0) {
+        std::cerr << "[dsm_malloc] Failed to open file: " << filepath 
+                  << " - " << std::strerror(errno) << std::endl;
+        return nullptr;
+    }
+    
+    // Get file size using stat
+    struct stat st;
+    if (fstat(fd, &st) < 0) {
+        std::cerr << "[dsm_malloc] Failed to stat file: " << filepath 
+                  << " - " << std::strerror(errno) << std::endl;
+        close(fd);
+        return nullptr;
+    }
+    
+    size_t filesize = st.st_size;
+    
+    // Set the number of elements (int type) if num pointer is provided
+    if (num != nullptr) {
+        *num = static_cast<int>(filesize / sizeof(int));
+    }
+    
+    // Calculate the number of pages required (ceiling division)
+    int page_required = static_cast<int>((filesize + PAGESIZE - 1) / PAGESIZE);
+    if (page_required == 0) page_required = 1;  // At least one page
+    
+    int pagebasenumber = SAC_VPNumber;
+    
+    // Update page table entries for this file binding
+    PageTable->GlobalMutexLock();
+    for (int i = 0; i < page_required; i++) {
+        PageRecord* record = PageTable->Find(pagebasenumber + i);
+        if (record != nullptr) {
+            record->filepath = filepath;
+            record->fd = fd;
+            record->offset = i;
+            record->owner_id = 0;  // Pod 0 is the owner initially
+        } else {
+            // Create new record if not found
+            PageRecord new_record;
+            new_record.filepath = filepath;
+            new_record.fd = fd;
+            new_record.offset = i;
+            new_record.owner_id = 0;
+            PageTable->Insert(pagebasenumber + i, new_record);
+        }
+    }
+    PageTable->GlobalMutexUnlock();
+    
+    // Save the start address before updating
+    void* result = SharedAddrCurrentLoc;
+    
+    // Update allocation pointers
+    SharedAddrCurrentLoc = reinterpret_cast<void*>(
+        reinterpret_cast<uintptr_t>(SharedAddrCurrentLoc) + static_cast<size_t>(page_required) * PAGESIZE
+    );
+    SAC_VPNumber += page_required;
+    
+    return result;
 }
-
 

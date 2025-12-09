@@ -33,15 +33,15 @@ public:
    using Base::Remove;
    using Base::Size;
    using Base::Update;
-   using Base::LockAcquire;
-   using Base::LockRelease;
+   using Base::GlobalMutexLock;
+   using Base::GlobalMutexUnlock;
 
-   // Ϊָ���ڵ������һ�� seq �ţ�����¼�����ڷ��� 0
+   // 为指定节点分配一个 seq 号，如果记录不存在返回 0
    uint32_t NextSeq(int node_id) {
-        LockAcquire();
+        GlobalMutexLock();
         auto *record = Find(node_id);
         uint32_t seq = record ? record->allocate_seq() : 0;
-        LockRelease();
+        GlobalMutexUnlock();
         return seq;
    }
 };

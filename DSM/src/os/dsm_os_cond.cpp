@@ -154,14 +154,18 @@ bool LaunchListenerThread(int Port)
 
 bool FetchGlobalData(int dsm_pagenum, std::string& LeaderNodeIp, int& LeaderNodePort)
 {
-    SharedPages = static_cast<size_t>(dsm_pagenum) / DSM_PAGE_SIZE;
+    // dsm_pagenum is the memory size in bytes, calculate the number of pages
+    // Use ceiling division to ensure we have enough pages
+    SharedPages = (static_cast<size_t>(dsm_pagenum) + PAGESIZE - 1) / PAGESIZE;
     SharedAddrBase = reinterpret_cast<void *>(0x4000000000ULL); 
     SharedAddrCurrentLoc = SharedAddrBase;  // Initialize current location
-    /*pseudo code:
-    SAB_VPNumber = ....
-    SAC_VPNumber = ....
-    //计算出来
-    */
+    
+    // Calculate virtual page number for shared address base
+    // SAB_VPNumber is the virtual page number of SharedAddrBase
+    SAB_VPNumber = static_cast<int>(reinterpret_cast<uintptr_t>(SharedAddrBase) / PAGESIZE);
+    // SAC_VPNumber starts at the same page number as SAB
+    SAC_VPNumber = SAB_VPNumber;
+    
     if (!GetEnvVar("DSM_LEADER_IP", LeaderNodeIp, std::string(""), true)) exit(1);
     if (!GetEnvVar("DSM_LEADER_PORT", LeaderNodePort, 0, true)) exit(1);
     if (!GetEnvVar("DSM_TOTAL_PROCESSES", ProcNum, 1, false)) exit(1);
@@ -190,8 +194,9 @@ bool FetchGlobalData(int dsm_pagenum, std::string& LeaderNodeIp, int& LeaderNode
 bool InitDataStructs(int dsm_pagenum)
 {   
    // Initialize shared memory region
+   // Note: dsm_pagenum is the memory size in bytes, we already calculated SharedPages
    if (SharedAddrBase != nullptr && SharedPages != 0){
-      const size_t total_size = (size_t)dsm_pagenum * PAGESIZE;
+      const size_t total_size = SharedPages * PAGESIZE;  // Use SharedPages calculated from dsm_pagenum
       void* mapped_addr = ::mmap(
          SharedAddrBase,                    // Desired start address
          total_size,                        // Size of the mapping
@@ -219,14 +224,17 @@ bool InitDataStructs(int dsm_pagenum)
    // Initialize page, lock, bind, and socket tables
    if (PageTable == nullptr)
       PageTable = new (::std::nothrow) class PageTable();
-   /*pseudo code:
-   int base_page_number = SharedAddressBase对应的虚拟页号  //起始虚拟页号
-   这里用户其实输入的是总共享页数量，需要对每一页创建一个页表条目
-   pagetable.globalmutexlock()
-   for (i = 0; i < dsm_pagenum; i++) 
-      pagetable.insert(base page number + i,PageRecord());
-   pagetable.globalmutexunlock
-   */
+   
+   // Initialize page table entries for all shared pages
+   // SAB_VPNumber is the base virtual page number of SharedAddrBase
+   if (PageTable != nullptr) {
+      PageTable->GlobalMutexLock();
+      for (size_t i = 0; i < SharedPages; i++) {
+         PageTable->Insert(SAB_VPNumber + static_cast<int>(i), PageRecord());
+      }
+      PageTable->GlobalMutexUnlock();
+   }
+   
    if (LockTable == nullptr)
       LockTable = new (::std::nothrow) class LockTable();
    if (SocketTable == nullptr)

@@ -312,6 +312,26 @@ static bool handle_page_require(int connfd, const dsm_header_t &header, rio_t &r
     if (owner_id == PodId) {
         std::cout << "[DSM Daemon] We are the owner of page " << VPN << ", sending page data" << std::endl;
         
+        // Prepare a buffer for page data
+        char page_buffer[DSM_PAGE_SIZE];
+        std::memset(page_buffer, 0, DSM_PAGE_SIZE);
+        
+        // Get page record to check if it's bound to a file
+        PageTable->GlobalMutexLock();
+        PageRecord* rec = PageTable->Find(VPN);
+        if (rec != nullptr && rec->fd >= 0 && !rec->filepath.empty()) {
+            // This page is bound to a file, read data from file
+            off_t file_offset = static_cast<off_t>(rec->offset) * DSM_PAGE_SIZE;
+            if (lseek(rec->fd, file_offset, SEEK_SET) >= 0) {
+                ssize_t bytes_read = read(rec->fd, page_buffer, DSM_PAGE_SIZE);
+                if (bytes_read < 0) {
+                    std::cerr << "[DSM Daemon] Failed to read file data for page " << VPN << std::endl;
+                }
+                // If less than page size, rest is already zero-filled
+            }
+        }
+        PageTable->GlobalMutexUnlock();
+        
         // Send page data
         dsm_header_t rep_header = {
             DSM_MSG_PAGE_REP,
@@ -335,8 +355,8 @@ static bool handle_page_require(int connfd, const dsm_header_t &header, rio_t &r
             return false;
         }
         
-        // Send page data
-        if (::send(connfd, (void*)page_addr, DSM_PAGE_SIZE, 0) != DSM_PAGE_SIZE) {
+        // Send page data from buffer
+        if (::send(connfd, page_buffer, DSM_PAGE_SIZE, 0) != DSM_PAGE_SIZE) {
             std::cerr << "[DSM Daemon] Failed to send page data" << std::endl;
             PageTable->LocalMutexUnlock(VPN);
             return false;
@@ -534,6 +554,7 @@ static bool handle_owner_update(int connfd, const dsm_header_t &header, rio_t &r
         record->owner_id = new_owner;
     }
     
+    PageTable->GlobalMutexUnlock();
     
     // Unlock the page
     PageTable->LocalMutexUnlock(VPN);

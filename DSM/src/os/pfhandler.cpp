@@ -21,6 +21,7 @@
 // Forward declarations
 extern int* InvalidPages;
 extern int getsocket(const std::string& ip, int port);
+extern int SAB_VPNumber;  // Base virtual page number of shared region
 
 STATIC size_t g_region_pages;   // number of pages in the managed region
 STATIC size_t g_page_sz;        // system page size
@@ -62,20 +63,20 @@ STATIC void segv_handler(int signo, siginfo_t* info, void* uctx)
     // Check if this page needs to be pulled from remote
     if (InvalidPages != nullptr && InvalidPages[page_index] == 0) {
         // First access or page was invalidated, need to pull from remote
+        // pull_remote_page will also set the page protection to PROT_READ | PROT_WRITE
         pull_remote_page(page_base);
+    } else {
+        // Page is valid but was invalidated by mprotect (e.g., in mutex_lock)
+        // Just restore page permissions to allow read/write access
+        if (mprotect((void*)page_base, g_page_sz, PROT_READ | PROT_WRITE) == -1) {
+            // Cannot use cerr in signal handler safely, but for debugging purposes
+            return;
+        }
     }
     
     // Mark the page as modified (invalid for other nodes)
     if (InvalidPages != nullptr) {
         InvalidPages[page_index] = 1;
-    }
-    
-    // Restore page permissions to allow read/write access
-    if (mprotect((void*)page_base, g_page_sz, PROT_READ | PROT_WRITE) == -1) {
-        std::cerr << "[segv_handler] mprotect failed for page at " 
-                  << std::hex << page_base << std::dec << ": " 
-                  << std::strerror(errno) << std::endl;
-        return;
     }
 }
 
@@ -87,12 +88,8 @@ void install_handler(void* base_addr, size_t num_pages)
         base_addr = (void *)0x4000000000; // default base address
     }
 
-    g_region = mmap(base_addr, num_pages * g_page_sz, PROT_NONE,
-                    MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
-    if (g_region == MAP_FAILED) {
-        perror("mmap");
-        std::exit(1);
-    }
+    // Store the region address (mmap is already done in InitDataStructs)
+    g_region = base_addr;
 
     stack_t alt{};
     alt.ss_sp = std::malloc(SIGSTKSZ);
@@ -110,12 +107,15 @@ void install_handler(void* base_addr, size_t num_pages)
 }
 
 void pull_remote_page(uintptr_t page_base){
-    // Calculate page index
+    // Calculate page index relative to the shared region
     uintptr_t region_start = (uintptr_t)g_region;
-    size_t page_index = (page_base - region_start) / g_page_sz;
+    size_t relative_page_index = (page_base - region_start) / g_page_sz;
     
-    // Calculate probable owner using hash
-    int probowner = page_index % ProcNum;
+    // Calculate the absolute virtual page number (used in page table)
+    int VPN = SAB_VPNumber + static_cast<int>(relative_page_index);
+    
+    // Calculate probable owner using hash on the relative page index
+    int probowner = relative_page_index % ProcNum;
     
     bool page_received = false;
     int retry_count = 0;
@@ -156,7 +156,7 @@ void pull_remote_page(uintptr_t page_base){
         };
         
         payload_page_req_t req_payload = {
-            htonl(page_index)          // page_index
+            htonl(static_cast<uint32_t>(VPN))  // Use absolute virtual page number
         };
         
         // Send header and payload
@@ -227,12 +227,20 @@ void pull_remote_page(uintptr_t page_base){
                 continue;
             }
             
+            // First, enable write access to the page so we can copy data
+            if (mprotect((void*)page_base, DSM_PAGE_SIZE, PROT_READ | PROT_WRITE) == -1) {
+                std::cerr << "[pull_remote_page] mprotect failed: " << std::strerror(errno) << std::endl;
+                delete[] page_buffer;
+                retry_count++;
+                continue;
+            }
+            
             // Copy page data to the memory location (DMA simulation)
             std::memcpy((void*)page_base, page_buffer, DSM_PAGE_SIZE);
             delete[] page_buffer;
             
-            // Send OWNER_UPDATE to the manager (probowner based on page_index % ProcNum)
-            int manager_id = page_index % ProcNum;
+            // Send OWNER_UPDATE to the manager (probowner based on relative_page_index % ProcNum)
+            int manager_id = relative_page_index % ProcNum;
             std::string manager_ip = GetPodIp(manager_id);
             int manager_port = GetPodPort(manager_id);
             
@@ -259,7 +267,7 @@ void pull_remote_page(uintptr_t page_base){
                 };
                 
                 payload_owner_update_t update_payload = {
-                    htonl(page_index),
+                    htonl(static_cast<uint32_t>(VPN)),  // Use absolute virtual page number
                     htons(PodId)
                 };
                 
@@ -278,6 +286,6 @@ void pull_remote_page(uintptr_t page_base){
     }
     
     if (!page_received) {
-        std::cerr << "[pull_remote_page] Failed to pull page " << page_index << " after " << max_retries << " retries" << std::endl;
+        std::cerr << "[pull_remote_page] Failed to pull page " << VPN << " after " << max_retries << " retries" << std::endl;
     }
 }
