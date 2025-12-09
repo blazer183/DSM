@@ -37,6 +37,7 @@ STATIC void segv_handler(int signo, siginfo_t* info, void* uctx)
     (void)uctx;
     
     // Get the faulting address
+    std::cout << "<Page Fault Happened!>" << std::endl;
     uintptr_t fault_addr = (uintptr_t)info->si_addr;
     uintptr_t region_start = (uintptr_t)g_region;
     uintptr_t region_end = region_start + (g_region_pages * g_page_sz);
@@ -57,31 +58,22 @@ STATIC void segv_handler(int signo, siginfo_t* info, void* uctx)
     }
     
     // Calculate page base address and page index
-    uintptr_t page_base = fault_addr & ~(g_page_sz - 1);
-    size_t page_index = (page_base - region_start) / g_page_sz;
+    int VPN = fault_addr >> 12;
     
     // Check if this page needs to be pulled from remote
-    if (InvalidPages != nullptr && InvalidPages[page_index] == 0) {
-        // First access or page was invalidated, need to pull from remote
-        // pull_remote_page will also set the page protection to PROT_READ | PROT_WRITE
-        pull_remote_page(page_base);
+    if (InvalidPages != nullptr && InvalidPages[VPN - SAB_VPNumber] == 0) {
+        pull_remote_page(VPN);
     } else {
-        // Page is valid but was invalidated by mprotect (e.g., in mutex_lock)
-        // Just restore page permissions to allow read/write access
-        if (mprotect((void*)page_base, g_page_sz, PROT_READ | PROT_WRITE) == -1) {
-            // Cannot use cerr in signal handler safely, but for debugging purposes
-            return;
-        }
+        mprotect((void*)page_base, g_page_sz, PROT_READ | PROT_WRITE);
     }
     
     // Mark the page as modified (invalid for other nodes)
-    if (InvalidPages != nullptr) {
-        InvalidPages[page_index] = 1;
-    }
+    InvalidPages[VPN - SAB_VPNumber] == 1;
 }
 
 void install_handler(void* base_addr, size_t num_pages)
-{
+{   
+    //std::cout << "install handler set!" <<std::endl;
     g_page_sz =  PAGESIZE; // get system page size
     g_region_pages = num_pages;
     if(base_addr == nullptr) {
@@ -106,186 +98,64 @@ void install_handler(void* base_addr, size_t num_pages)
     }
 }
 
-void pull_remote_page(uintptr_t page_base){
-    // Calculate page index relative to the shared region
-    uintptr_t region_start = (uintptr_t)g_region;
-    size_t relative_page_index = (page_base - region_start) / g_page_sz;
-    
-    // Calculate the absolute virtual page number (used in page table)
-    int VPN = SAB_VPNumber + static_cast<int>(relative_page_index);
-    
-    // Calculate probable owner using hash on the relative page index
-    int probowner = relative_page_index % ProcNum;
-    
-    bool page_received = false;
-    int retry_count = 0;
-    const int max_retries = 10;
-    
-    while (!page_received && retry_count < max_retries) {
-        // Get connection to probable owner
-        std::string target_ip = GetPodIp(probowner);
-        int target_port = GetPodPort(probowner);
-        
-        int sock = getsocket(target_ip, target_port);
-        
-        if (sock < 0) {
-            std::cerr << "[pull_remote_page] Failed to connect to " << target_ip << ":" << target_port << std::endl;
-            retry_count++;
-            usleep(100000);  // Wait 100ms before retry
-            continue;
+void pull_remote_page(int VPN){
+    /*
+    pseudocode:
+    probowner = VPN % ProcNum
+
+    send to probowner:
+    Socket_prob = getsocket(probowner);
+    A：
+    send to Socket_prob{
+        struct {
+            DSM_MSG_PAGE_REQ
+            0/1		
+            PodId
+            socketrecord.seq_num
+            sizeof(payload)
         }
-        
-        // Get sequence number for this connection
-        uint32_t seq_num = 1;
-        if (SocketTable != nullptr) {
-            SocketTable->GlobalMutexLock();
-            SocketRecord* record = SocketTable->Find(probowner);
-            if (record != nullptr) {
-                seq_num = record->allocate_seq();
-            }
-            SocketTable->GlobalMutexUnlock();
-        }
-        
-        // Build and send DSM_MSG_PAGE_REQ
-        dsm_header_t req_header = {
-            DSM_MSG_PAGE_REQ,
-            0,                          // unused
-            htons(PodId),              // src_node_id
-            htonl(seq_num),            // seq_num
-            htonl(sizeof(payload_page_req_t))  // payload_len
-        };
-        
-        payload_page_req_t req_payload = {
-            htonl(static_cast<uint32_t>(VPN))  // Use absolute virtual page number
-        };
-        
-        // Send header and payload
-        if (::send(sock, &req_header, sizeof(req_header), 0) != sizeof(req_header)) {
-            std::cerr << "[pull_remote_page] Failed to send request header" << std::endl;
-            retry_count++;
-            continue;
-        }
-        
-        if (::send(sock, &req_payload, sizeof(req_payload), 0) != sizeof(req_payload)) {
-            std::cerr << "[pull_remote_page] Failed to send request payload" << std::endl;
-            retry_count++;
-            continue;
-        }
-        
-        // Receive response
-        rio_t rio;
-        rio_readinit(&rio, sock);
-        
-        dsm_header_t rep_header;
-        if (rio_readn(&rio, &rep_header, sizeof(rep_header)) != sizeof(rep_header)) {
-            std::cerr << "[pull_remote_page] Failed to receive response header" << std::endl;
-            retry_count++;
-            continue;
-        }
-        
-        if (rep_header.type != DSM_MSG_PAGE_REP) {
-            std::cerr << "[pull_remote_page] Unexpected response type: " << (int)rep_header.type << std::endl;
-            retry_count++;
-            continue;
-        }
-        
-        // Check unused field: 1 = has page data, 0 = redirect to real owner
-        if (rep_header.unused == 0) {
-            // Redirect: read real_owner_id and retry
-            uint16_t real_owner_id;
-            if (rio_readn(&rio, &real_owner_id, sizeof(real_owner_id)) != sizeof(real_owner_id)) {
-                std::cerr << "[pull_remote_page] Failed to read real_owner_id" << std::endl;
-                retry_count++;
-                continue;
-            }
-            
-            real_owner_id = ntohs(real_owner_id);
-            probowner = real_owner_id;
-            retry_count++;
-            continue;  // Retry with new owner
-        } else {
-            // Has page data: read real_owner_id (ignored) and page data
-            uint16_t real_owner_id;
-            if (rio_readn(&rio, &real_owner_id, sizeof(real_owner_id)) != sizeof(real_owner_id)) {
-                std::cerr << "[pull_remote_page] Failed to read real_owner_id field" << std::endl;
-                retry_count++;
-                continue;
-            }
-            
-            // Read page data directly using dynamic allocation
-            char* page_buffer = new (std::nothrow) char[g_page_sz];
-            if (page_buffer == nullptr) {
-                std::cerr << "[pull_remote_page] Failed to allocate page buffer" << std::endl;
-                retry_count++;
-                continue;
-            }
-            
-            if (rio_readn(&rio, page_buffer, g_page_sz) != static_cast<ssize_t>(g_page_sz)) {
-                std::cerr << "[pull_remote_page] Failed to read page data" << std::endl;
-                delete[] page_buffer;
-                retry_count++;
-                continue;
-            }
-            
-            // First, enable write access to the page so we can copy data
-            if (mprotect((void*)page_base, g_page_sz, PROT_READ | PROT_WRITE) == -1) {
-                std::cerr << "[pull_remote_page] mprotect failed: " << std::strerror(errno) << std::endl;
-                delete[] page_buffer;
-                retry_count++;
-                continue;
-            }
-            
-            // Copy page data to the memory location (DMA simulation)
-            std::memcpy((void*)page_base, page_buffer, g_page_sz);
-            delete[] page_buffer;
-            
-            // Send OWNER_UPDATE to the manager (probowner based on relative_page_index % ProcNum)
-            int manager_id = relative_page_index % ProcNum;
-            std::string manager_ip = GetPodIp(manager_id);
-            int manager_port = GetPodPort(manager_id);
-            
-            int mgr_sock = getsocket(manager_ip, manager_port);
-            if (mgr_sock >= 0) {
-                // Get sequence number for manager connection
-                uint32_t mgr_seq = 1;
-                if (SocketTable != nullptr) {
-                    SocketTable->GlobalMutexLock();
-                    SocketRecord* mgr_record = SocketTable->Find(manager_id);
-                    if (mgr_record != nullptr) {
-                        mgr_seq = mgr_record->allocate_seq();
-                    }
-                    SocketTable->GlobalMutexUnlock();
-                }
-                
-                // Build OWNER_UPDATE message
-                dsm_header_t update_header = {
-                    DSM_MSG_OWNER_UPDATE,
-                    0,
-                    htons(PodId),
-                    htonl(mgr_seq),
-                    htonl(sizeof(payload_owner_update_t))
-                };
-                
-                payload_owner_update_t update_payload = {
-                    htonl(static_cast<uint32_t>(VPN)),  // Use absolute virtual page number
-                    htons(PodId)
-                };
-                
-                ::send(mgr_sock, &update_header, sizeof(update_header), 0);
-                ::send(mgr_sock, &update_payload, sizeof(update_payload), 0);
-                
-                // Wait for ACK
-                rio_t mgr_rio;
-                rio_readinit(&mgr_rio, mgr_sock);
-                dsm_header_t ack_header;
-                rio_readn(&mgr_rio, &ack_header, sizeof(ack_header));
-            }
-            
-            page_received = true;
+
+        payload: 
+        struct {
+            VPN	
         }
     }
     
-    if (!page_received) {
-        std::cerr << "[pull_remote_page] Failed to pull page " << VPN << " after " << max_retries << " retries" << std::endl;
+
+    cout<<[System information] succeed in send msg <<endl
+
+    rcv:
+    if(unused == 0){
+        probowner = real_owner_id
+        goto A;
+    }else{
+        load pagedata to mem(DMA)
+        //在DMA的同时，CPU进行以下活动overlap：
+        probowner = page_index%ProcNum
+        Socket_prob = getsocket(probowner)
+        send to Socket_prob{
+            struct {
+                DSM_MSG_OWNER_UPDATE
+                0/1
+                PodId
+                seq_num
+                sizeof(payload)
+            }
+            
+            payload:
+            
+            typedef struct {
+                page_index;    // 页号
+                PodId;   // 页面最新副本在哪里
+            } payload_owner_update_t;
+        }
+        
+        
+        rvc: ACK
+        while(DMA is not complete) {}
+        cout << [System information] succeed <<
+        return ;
     }
+
+
 }

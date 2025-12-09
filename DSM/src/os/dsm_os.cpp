@@ -165,6 +165,8 @@ int dsm_mutex_lock(int *mutex){
         size_t total_size = SharedPages * PAGESIZE;
         if (mprotect(SharedAddrBase, total_size, PROT_NONE) == -1) {
             std::cerr << "[dsm_mutex_lock] mprotect failed: " << std::strerror(errno) << std::endl;
+        }else{
+            std::cerr << "[dsm_mutex_lock] mprotect succeed: " << std::endl;
         }
     }
 

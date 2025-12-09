@@ -17,7 +17,7 @@ void cluster_config(){
 int main(){
     std::cout << "========== DSM: Sum of array test ==========" << std::endl;
     
-    int memsize = PAGESIZE + sizeof(int);  
+    int memsize = 100;  
     int result = dsm_init(memsize);   
     if (result != 0) {
         std::cerr << "[System information] ERROR: dsm_init() failed, return value: " << result << std::endl;
@@ -33,8 +33,10 @@ int main(){
     int myrank = dsm_getpodid();
     int elen ;
     int *Ar = (int *) dsm_malloc("$HOME/dsm/Ar", &elen);     //分配
+    elen = 9;
+    std::cout << "[System information] Ar: " << Ar << std::endl;
     int *sum = (int *) dsm_malloc("$HOME/dsm/sum", nullptr);
-
+    std::cout << "[System information] sum: " << sum << std::endl;
     std::cout << "[System information] Pod " << myrank << " allocated and bound memory." << std::endl;
 
     int lock_A = dsm_mutex_init();
@@ -43,7 +45,9 @@ int main(){
     dsm_mutex_lock(&lock_A);
     for(int i = 0; i < elen; i+=ProcNum)
         S += Ar[i];
+    std::cout << "[System information] Ar: " << Ar[0] << std::endl;
     dsm_mutex_unlock(&lock_A);
+    std:: cout << "local sum is: "<< S << std::endl;
 
     dsm_mutex_lock(&lock_A);
     (*sum) = (*sum) + S;

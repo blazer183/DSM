@@ -156,7 +156,7 @@ bool FetchGlobalData(int dsm_pagenum, std::string& LeaderNodeIp, int& LeaderNode
 {
     // dsm_pagenum is the memory size in bytes, calculate the number of pages
     // Use ceiling division to ensure we have enough pages
-    SharedPages = (static_cast<size_t>(dsm_pagenum) + PAGESIZE - 1) / PAGESIZE;
+    SharedPages = dsm_pagenum ;
     SharedAddrBase = reinterpret_cast<void *>(0x4000000000ULL); 
     SharedAddrCurrentLoc = SharedAddrBase;  // Initialize current location
     

@@ -114,7 +114,7 @@ show_santi_ui() {
     echo -e "${GREY}${status_text}${RESET}"
     echo ""
     
-    sleep 3
+    sleep 0.1
 }
 
 # 运行
