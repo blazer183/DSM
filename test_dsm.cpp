@@ -43,9 +43,10 @@ int main(){
     int S= 0;
 
     dsm_mutex_lock(&lock_A);
-    for(int i = 0; i < elen; i+=ProcNum)
-        S += Ar[i];
-    std::cout << "[System information] Ar: " << Ar[0] << std::endl;
+    for(int i = 0; i < elen; i+=ProcNum){
+        std::cout << "[System information] Ar: " << Ar[i] << std::endl;
+    }
+    
     dsm_mutex_unlock(&lock_A);
     std:: cout << "local sum is: "<< S << std::endl;
 
