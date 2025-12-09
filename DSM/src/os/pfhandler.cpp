@@ -7,10 +7,12 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
+#include <fcntl.h>
 
 #include "dsm.h"
 #include "net/protocol.h"
 #include "os/socket_table.h"
+#include "os/page_table.h"
 
 #ifdef UNITEST
 #define STATIC 
@@ -107,6 +109,46 @@ void pull_remote_page(int VPN){
     
     // Calculate page base address
     uintptr_t page_base = static_cast<uintptr_t>(VPN) << 12;
+    
+    // Check if we are the owner and can load directly from file
+    if (PageTable != nullptr) {
+        PageTable->GlobalMutexLock();
+        PageRecord* record = PageTable->Find(VPN);
+        if (record != nullptr && record->owner_id == PodId) {
+            // We are the owner, check if page is bound to a file
+            if (record->fd >= 0 && !record->filepath.empty()) {
+                // Load directly from file
+                char page_buffer[DSM_PAGE_SIZE];
+                std::memset(page_buffer, 0, DSM_PAGE_SIZE);
+                
+                off_t file_offset = static_cast<off_t>(record->offset) * DSM_PAGE_SIZE;
+                if (lseek(record->fd, file_offset, SEEK_SET) >= 0) {
+                    ssize_t bytes_read = read(record->fd, page_buffer, DSM_PAGE_SIZE);
+                    if (bytes_read < 0) {
+                        std::cerr << "[pull_remote_page] Failed to read file data for page " << VPN << std::endl;
+                    }
+                }
+                PageTable->GlobalMutexUnlock();
+                
+                // Make the page writable and copy data
+                if (mprotect((void*)page_base, g_page_sz, PROT_READ | PROT_WRITE) != 0) {
+                    std::cerr << "[pull_remote_page] mprotect failed for local page" << std::endl;
+                    return;
+                }
+                std::memcpy((void*)page_base, page_buffer, DSM_PAGE_SIZE);
+                std::cout << "[System information] Page " << VPN << " loaded directly from file (owner)" << std::endl;
+                return;
+            } else {
+                // We are owner but page is not bound to file, just make it writable
+                PageTable->GlobalMutexUnlock();
+                if (mprotect((void*)page_base, g_page_sz, PROT_READ | PROT_WRITE) != 0) {
+                    std::cerr << "[pull_remote_page] mprotect failed for local page" << std::endl;
+                }
+                return;
+            }
+        }
+        PageTable->GlobalMutexUnlock();
+    }
     
     // Retry loop for following redirects to real owner
     while (true) {

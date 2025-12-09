@@ -249,11 +249,12 @@ int dsm_mutex_lock(int *mutex){
                     return -1;
                 }
                 
-                // Mark pages as invalid
+                // Mark pages as needing to be pulled (invalidated by previous owner)
+                // InvalidPages[i] = 0 means we need to pull from remote
                 for (uint32_t i = 0; i < invalid_count; i++) {
                     uint32_t page_idx = ntohl(invalid_pages[i]);
                     if (page_idx < (uint32_t)SharedPages) {
-                        InvalidPages[page_idx] = 1;
+                        InvalidPages[page_idx] = 0;
                     }
                 }
             }
