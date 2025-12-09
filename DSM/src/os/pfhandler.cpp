@@ -119,12 +119,14 @@ void pull_remote_page(int VPN){
             // We are the owner, check if page is bound to a file
             if (record->fd >= 0 && !record->filepath.empty()) {
                 // Load directly from file
+                // Note: Using stack allocation for buffer is consistent with existing code
+                // and runs on alternate signal stack (SIGSTKSZ)
                 char page_buffer[DSM_PAGE_SIZE];
-                std::memset(page_buffer, 0, DSM_PAGE_SIZE);
+                std::memset(page_buffer, 0, DSM_PAGE_SIZE);  // Zero-fill for partial reads
                 
                 off_t file_offset = static_cast<off_t>(record->offset) * DSM_PAGE_SIZE;
                 off_t seek_result = lseek(record->fd, file_offset, SEEK_SET);
-                if (seek_result < 0) {
+                if (seek_result == static_cast<off_t>(-1)) {
                     std::cerr << "[pull_remote_page] Failed to seek file for page " << VPN 
                               << ": " << std::strerror(errno) << std::endl;
                     PageTable->GlobalMutexUnlock();
@@ -138,6 +140,8 @@ void pull_remote_page(int VPN){
                     PageTable->GlobalMutexUnlock();
                     return;
                 }
+                // Note: partial reads (0 <= bytes_read < DSM_PAGE_SIZE) are OK - 
+                // remaining buffer is already zero-filled from memset above
                 PageTable->GlobalMutexUnlock();
                 
                 // Make the page writable and copy data
