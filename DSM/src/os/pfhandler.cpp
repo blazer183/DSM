@@ -2,6 +2,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <cstdint>
+#include <cerrno>
 #include <iostream>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -122,11 +123,20 @@ void pull_remote_page(int VPN){
                 std::memset(page_buffer, 0, DSM_PAGE_SIZE);
                 
                 off_t file_offset = static_cast<off_t>(record->offset) * DSM_PAGE_SIZE;
-                if (lseek(record->fd, file_offset, SEEK_SET) >= 0) {
-                    ssize_t bytes_read = read(record->fd, page_buffer, DSM_PAGE_SIZE);
-                    if (bytes_read < 0) {
-                        std::cerr << "[pull_remote_page] Failed to read file data for page " << VPN << std::endl;
-                    }
+                off_t seek_result = lseek(record->fd, file_offset, SEEK_SET);
+                if (seek_result < 0) {
+                    std::cerr << "[pull_remote_page] Failed to seek file for page " << VPN 
+                              << ": " << std::strerror(errno) << std::endl;
+                    PageTable->GlobalMutexUnlock();
+                    return;
+                }
+                
+                ssize_t bytes_read = read(record->fd, page_buffer, DSM_PAGE_SIZE);
+                if (bytes_read < 0) {
+                    std::cerr << "[pull_remote_page] Failed to read file data for page " << VPN 
+                              << ": " << std::strerror(errno) << std::endl;
+                    PageTable->GlobalMutexUnlock();
+                    return;
                 }
                 PageTable->GlobalMutexUnlock();
                 
