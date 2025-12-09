@@ -29,7 +29,7 @@ STATIC void* g_region;          // start address of the managed memory region
 STATIC struct sigaction g_prev_sa;  // previous SIGSEGV handler
 
 // Forward declaration
-STATIC void pull_remote_page(uintptr_t page_base);
+STATIC void pull_remote_page(int VPN);
 
 STATIC void segv_handler(int signo, siginfo_t* info, void* uctx)
 {
@@ -59,6 +59,7 @@ STATIC void segv_handler(int signo, siginfo_t* info, void* uctx)
     
     // Calculate page base address and page index
     int VPN = fault_addr >> 12;
+    uintptr_t page_base = static_cast<uintptr_t>(VPN) << 12;
     
     // Check if this page needs to be pulled from remote
     if (InvalidPages != nullptr && InvalidPages[VPN - SAB_VPNumber] == 0) {
@@ -68,7 +69,7 @@ STATIC void segv_handler(int signo, siginfo_t* info, void* uctx)
     }
     
     // Mark the page as modified (invalid for other nodes)
-    InvalidPages[VPN - SAB_VPNumber] == 1;
+    InvalidPages[VPN - SAB_VPNumber] = 1;
 }
 
 void install_handler(void* base_addr, size_t num_pages)
@@ -99,63 +100,174 @@ void install_handler(void* base_addr, size_t num_pages)
 }
 
 void pull_remote_page(int VPN){
-    /*
-    pseudocode:
-    probowner = VPN % ProcNum
-
-    send to probowner:
-    Socket_prob = getsocket(probowner);
-    A：
-    send to Socket_prob{
-        struct {
-            DSM_MSG_PAGE_REQ
-            0/1		
-            PodId
-            socketrecord.seq_num
-            sizeof(payload)
-        }
-
-        payload: 
-        struct {
-            VPN	
-        }
+    // Calculate probable owner using hash (VPN % ProcNum)
+    int probowner = VPN % ProcNum;
+    
+    // Calculate page base address
+    uintptr_t page_base = static_cast<uintptr_t>(VPN) << 12;
+    
+retry_request:
+    // Get socket to probable owner
+    std::string target_ip = GetPodIp(probowner);
+    int target_port = GetPodPort(probowner);
+    int sock = getsocket(target_ip, target_port);
+    
+    if (sock < 0) {
+        std::cerr << "[pull_remote_page] Failed to connect to node " << probowner 
+                  << " at " << target_ip << ":" << target_port << std::endl;
+        return;
     }
     
-
-    cout<<[System information] succeed in send msg <<endl
-
-    rcv:
-    if(unused == 0){
-        probowner = real_owner_id
-        goto A;
-    }else{
-        load pagedata to mem(DMA)
-        //在DMA的同时，CPU进行以下活动overlap：
-        probowner = page_index%ProcNum
-        Socket_prob = getsocket(probowner)
-        send to Socket_prob{
-            struct {
-                DSM_MSG_OWNER_UPDATE
-                0/1
-                PodId
-                seq_num
-                sizeof(payload)
-            }
-            
-            payload:
-            
-            typedef struct {
-                page_index;    // 页号
-                PodId;   // 页面最新副本在哪里
-            } payload_owner_update_t;
+    // Get sequence number for this connection
+    uint32_t seq_num = 1;
+    if (SocketTable != nullptr) {
+        SocketTable->GlobalMutexLock();
+        SocketRecord* record = SocketTable->Find(probowner);
+        if (record != nullptr) {
+            seq_num = record->allocate_seq();
         }
-        
-        
-        rvc: ACK
-        while(DMA is not complete) {}
-        cout << [System information] succeed <<
-        return ;
+        SocketTable->GlobalMutexUnlock();
     }
-
-
+    
+    // Build and send PAGE_REQ message
+    dsm_header_t req_header = {
+        DSM_MSG_PAGE_REQ,
+        0,                              // unused
+        htons(static_cast<uint16_t>(PodId)),  // src_node_id
+        htonl(seq_num),                 // seq_num
+        htonl(sizeof(payload_page_req_t))  // payload_len
+    };
+    
+    payload_page_req_t req_payload = {
+        htonl(static_cast<uint32_t>(VPN))  // page_index
+    };
+    
+    // Send header and payload
+    if (::send(sock, &req_header, sizeof(req_header), 0) != sizeof(req_header)) {
+        std::cerr << "[pull_remote_page] Failed to send PAGE_REQ header" << std::endl;
+        return;
+    }
+    
+    if (::send(sock, &req_payload, sizeof(req_payload), 0) != sizeof(req_payload)) {
+        std::cerr << "[pull_remote_page] Failed to send PAGE_REQ payload" << std::endl;
+        return;
+    }
+    
+    std::cout << "[System information] Succeed in sending PAGE_REQ for VPN=" << VPN 
+              << " to node " << probowner << std::endl;
+    
+    // Receive response
+    rio_t rio;
+    rio_readinit(&rio, sock);
+    
+    dsm_header_t rep_header;
+    if (rio_readn(&rio, &rep_header, sizeof(rep_header)) != sizeof(rep_header)) {
+        std::cerr << "[pull_remote_page] Failed to receive PAGE_REP header" << std::endl;
+        return;
+    }
+    
+    // Check response type
+    if (rep_header.type != DSM_MSG_PAGE_REP) {
+        std::cerr << "[pull_remote_page] Unexpected response type: " << static_cast<int>(rep_header.type) << std::endl;
+        return;
+    }
+    
+    // Read real_owner_id first
+    uint16_t real_owner_id;
+    if (rio_readn(&rio, &real_owner_id, sizeof(real_owner_id)) != sizeof(real_owner_id)) {
+        std::cerr << "[pull_remote_page] Failed to read real_owner_id" << std::endl;
+        return;
+    }
+    real_owner_id = ntohs(real_owner_id);
+    
+    // Check unused flag to determine if this is a redirect or data response
+    if (rep_header.unused == 0) {
+        // Redirect to real owner
+        std::cout << "[System information] Redirecting to real owner: node " << real_owner_id << std::endl;
+        probowner = real_owner_id;
+        goto retry_request;
+    }
+    
+    // unused == 1: We received page data
+    // Read page data
+    char page_buffer[DSM_PAGE_SIZE];
+    if (rio_readn(&rio, page_buffer, DSM_PAGE_SIZE) != DSM_PAGE_SIZE) {
+        std::cerr << "[pull_remote_page] Failed to read page data" << std::endl;
+        return;
+    }
+    
+    // Make the page writable before copying data
+    if (mprotect((void*)page_base, g_page_sz, PROT_READ | PROT_WRITE) != 0) {
+        std::cerr << "[pull_remote_page] mprotect failed" << std::endl;
+        return;
+    }
+    
+    // Copy page data to memory (equivalent to DMA)
+    std::memcpy((void*)page_base, page_buffer, DSM_PAGE_SIZE);
+    
+    // Send OWNER_UPDATE to the manager (probowner = VPN % ProcNum)
+    int manager_id = VPN % ProcNum;
+    std::string manager_ip = GetPodIp(manager_id);
+    int manager_port = GetPodPort(manager_id);
+    int manager_sock = getsocket(manager_ip, manager_port);
+    
+    if (manager_sock < 0) {
+        std::cerr << "[pull_remote_page] Failed to connect to manager " << manager_id << std::endl;
+        // Page data is already loaded, so we can continue
+        std::cout << "[System information] Page loaded successfully (OWNER_UPDATE skipped)" << std::endl;
+        return;
+    }
+    
+    // Get sequence number for manager connection
+    uint32_t update_seq = 1;
+    if (SocketTable != nullptr) {
+        SocketTable->GlobalMutexLock();
+        SocketRecord* record = SocketTable->Find(manager_id);
+        if (record != nullptr) {
+            update_seq = record->allocate_seq();
+        }
+        SocketTable->GlobalMutexUnlock();
+    }
+    
+    // Build and send OWNER_UPDATE message
+    dsm_header_t update_header = {
+        DSM_MSG_OWNER_UPDATE,
+        0,                              // unused
+        htons(static_cast<uint16_t>(PodId)),  // src_node_id
+        htonl(update_seq),              // seq_num
+        htonl(sizeof(payload_owner_update_t))  // payload_len
+    };
+    
+    payload_owner_update_t update_payload = {
+        htonl(static_cast<uint32_t>(VPN)),    // resource_id (page number)
+        htons(static_cast<uint16_t>(PodId))   // new_owner_id (we are the new owner)
+    };
+    
+    // Send OWNER_UPDATE header and payload
+    if (::send(manager_sock, &update_header, sizeof(update_header), 0) != sizeof(update_header)) {
+        std::cerr << "[pull_remote_page] Failed to send OWNER_UPDATE header" << std::endl;
+        return;
+    }
+    
+    if (::send(manager_sock, &update_payload, sizeof(update_payload), 0) != sizeof(update_payload)) {
+        std::cerr << "[pull_remote_page] Failed to send OWNER_UPDATE payload" << std::endl;
+        return;
+    }
+    
+    // Wait for ACK
+    rio_t ack_rio;
+    rio_readinit(&ack_rio, manager_sock);
+    
+    dsm_header_t ack_header;
+    if (rio_readn(&ack_rio, &ack_header, sizeof(ack_header)) != sizeof(ack_header)) {
+        std::cerr << "[pull_remote_page] Failed to receive ACK for OWNER_UPDATE" << std::endl;
+        return;
+    }
+    
+    if (ack_header.type != DSM_MSG_ACK) {
+        std::cerr << "[pull_remote_page] Unexpected ACK type: " << static_cast<int>(ack_header.type) << std::endl;
+        return;
+    }
+    
+    std::cout << "[System information] Page " << VPN << " loaded successfully, ownership updated" << std::endl;
 }
