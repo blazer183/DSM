@@ -213,14 +213,14 @@ void pull_remote_page(uintptr_t page_base){
             }
             
             // Read page data directly using dynamic allocation
-            char* page_buffer = new (std::nothrow) char[DSM_PAGE_SIZE];
+            char* page_buffer = new (std::nothrow) char[g_page_sz];
             if (page_buffer == nullptr) {
                 std::cerr << "[pull_remote_page] Failed to allocate page buffer" << std::endl;
                 retry_count++;
                 continue;
             }
             
-            if (rio_readn(&rio, page_buffer, DSM_PAGE_SIZE) != DSM_PAGE_SIZE) {
+            if (rio_readn(&rio, page_buffer, g_page_sz) != static_cast<ssize_t>(g_page_sz)) {
                 std::cerr << "[pull_remote_page] Failed to read page data" << std::endl;
                 delete[] page_buffer;
                 retry_count++;
@@ -228,7 +228,7 @@ void pull_remote_page(uintptr_t page_base){
             }
             
             // First, enable write access to the page so we can copy data
-            if (mprotect((void*)page_base, DSM_PAGE_SIZE, PROT_READ | PROT_WRITE) == -1) {
+            if (mprotect((void*)page_base, g_page_sz, PROT_READ | PROT_WRITE) == -1) {
                 std::cerr << "[pull_remote_page] mprotect failed: " << std::strerror(errno) << std::endl;
                 delete[] page_buffer;
                 retry_count++;
@@ -236,7 +236,7 @@ void pull_remote_page(uintptr_t page_base){
             }
             
             // Copy page data to the memory location (DMA simulation)
-            std::memcpy((void*)page_base, page_buffer, DSM_PAGE_SIZE);
+            std::memcpy((void*)page_base, page_buffer, g_page_sz);
             delete[] page_buffer;
             
             // Send OWNER_UPDATE to the manager (probowner based on relative_page_index % ProcNum)

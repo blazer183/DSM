@@ -363,8 +363,20 @@ int dsm_mutex_unlock(int *mutex){
 //返回参数：数组的起始地址
 //目前共享区里的共享数据不支持字符串，对于数字默认int类型，所以返回的元素个数也是sizeof(int)为最小单位
 void* dsm_malloc(const char *name, int * num){
-    // Only Pod 0 (leader) can allocate and bind files
-    if(PodId != 0) return SharedAddrCurrentLoc;
+    // For non-leader processes, return the current allocation address
+    // Note: In a distributed system, this assumes the allocation order is deterministic
+    // and all processes call dsm_malloc in the same order with the same arguments
+    if(PodId != 0) {
+        // Non-Pod 0 processes: just return the current location and advance it
+        // We need to calculate how much to advance based on file size
+        // For now, advance by one page as a simple approximation
+        void* result = SharedAddrCurrentLoc;
+        SharedAddrCurrentLoc = reinterpret_cast<void*>(
+            reinterpret_cast<uintptr_t>(SharedAddrCurrentLoc) + PAGESIZE
+        );
+        SAC_VPNumber += 1;
+        return result;
+    }
     
     // Expand environment variables in the path (e.g., $HOME)
     std::string filepath(name);
