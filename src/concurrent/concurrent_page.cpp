@@ -58,15 +58,12 @@ void process_page_req(int sock, const dsm_header_t& head, const payload_page_req
     
     int current_owner = record ? record->owner_id : -1;
 
-    
-
     // 计算物理地址用于发送数据
     uintptr_t page_addr_int = (uintptr_t)SharedAddrBase + (body.page_index * DSM_PAGE_SIZE);
     void* page_ptr = (void*)page_addr_int;
 
     // Case A: owner_id == PodId
-      if (current_owner == dsm_getnodeid()) {
-        
+      if (current_owner == dsm_getnodeid()) {   
 
         dsm_header_t rep_head = {0};
         rep_head.type = DSM_MSG_PAGE_REP;
@@ -84,35 +81,11 @@ void process_page_req(int sock, const dsm_header_t& head, const payload_page_req
                   << body.page_index << " to Node " << head.src_node_id << std::endl;
         send(sock, (const char*)&rep_head, sizeof(rep_head), 0);
         send(sock, (const char*)&rep_body, sizeof(rep_body), 0);
-
-        dsm_header_t update_head;
-        payload_owner_update_t update_body;
-                
-        // 这里会卡住，直到 Node 1 处理完并回信
-        // 如果 Node 2 此时来请求，会在 LocalMutexLock 那里被卡住，非常完美
-        ssize_t n = recv(sock, &update_head, sizeof(update_head), MSG_WAITALL);
-                
-        if (n > 0 && update_head.type == DSM_MSG_OWNER_UPDATE) {
-            recv(sock, &update_body, sizeof(update_body), MSG_WAITALL);
-
-            if (record) {
-                record->owner_id = update_body.new_owner_id;
-            }       
-            
-                    
-            std::cout << "[DSM] Ownership transferred to Node " << record->owner_id << std::endl;
-        } else {
-            std::cerr << "[DSM] Warning: Did not receive Owner Update from Node " << head.src_node_id << std::endl;
-        }
-
-        ::PageTable->LocalMutexUnlock(body.page_index);
-
         return;
     } 
     // Case B: owner_id != PodId
     else if ( current_owner != -1 && current_owner != dsm_getnodeid()) {
         
-
         dsm_header_t rep_head = {0};
         rep_head.type = DSM_MSG_PAGE_REP; 
         rep_head.src_node_id = dsm_getnodeid();
@@ -142,10 +115,6 @@ void process_page_req(int sock, const dsm_header_t& head, const payload_page_req
 
         if (load_success) {
             
-            if (record) record->owner_id = 0; 
-            current_owner = 0; // 修正局部变量
-            
-
             dsm_header_t rep_head = {0};
             rep_head.type = DSM_MSG_PAGE_REP;
             rep_head.src_node_id = dsm_getnodeid();
@@ -161,35 +130,7 @@ void process_page_req(int sock, const dsm_header_t& head, const payload_page_req
 
             send(sock, (const char*)&rep_head, sizeof(rep_head), 0);
             send(sock, (const char*)&rep_body, sizeof(rep_body), 0);
-
-            if(dsm_getnodeid() == head.src_node_id) {
-                // 如果请求者正好是 Node 0 自己，就不必等 Update 了
-                ::PageTable->LocalMutexUnlock(body.page_index);
-                return;
-            }
-
-            // 阻塞接收 Node 1 发回来的 Update 包
-                dsm_header_t update_head;
-                payload_owner_update_t update_body;
-                
-                // 这里会卡住，直到 Node 1 处理完并回信
-                // 如果 Node 2 此时来请求，会在 LocalMutexLock 那里被卡住，非常完美
-                ssize_t n = recv(sock, &update_head, sizeof(update_head), MSG_WAITALL);
-                
-                if (n > 0 && update_head.type == DSM_MSG_OWNER_UPDATE) {
-                    recv(sock, &update_body, sizeof(update_body), MSG_WAITALL);
-                    
-                    if (record) {
-                record->owner_id = update_body.new_owner_id;
-            }
-                    std::cout << "[DSM] Ownership transferred to Node " << record->owner_id << std::endl;
-                } else {
-                    std::cerr << "[DSM] Warning: Did not receive Owner Update from Node " << head.src_node_id << std::endl;
-                }
-
-
-            ::PageTable->LocalMutexUnlock(body.page_index);
-                        
+                   
         } else {
             std::cerr << "[DSM] Disk load failed for page " << body.page_index << std::endl;
             ::PageTable->LocalMutexUnlock(body.page_index);
@@ -198,8 +139,6 @@ void process_page_req(int sock, const dsm_header_t& head, const payload_page_req
     }
     // Case D: owner_id = -1 && PodId != 0
     else if (current_owner == -1 && dsm_getnodeid() != 0) {
-        
-
         // 【绝对不能调 DSM_LoadFromDisk，因为我没有文件】
         // 1. 建立临时连接连 Node 0
         int temp_sock = socket(AF_INET, SOCK_STREAM, 0);
@@ -225,48 +164,36 @@ void process_page_req(int sock, const dsm_header_t& head, const payload_page_req
             dsm_header_t rep_head_in;
             payload_page_rep_t rep_body_in; 
             
-            // 接收头
-            recv(temp_sock, &rep_head_in, sizeof(rep_head_in), MSG_WAITALL);
-            // 接收体 (包含 4096 数据的结构体)
-            recv(temp_sock, &rep_body_in, sizeof(rep_body_in), MSG_WAITALL);
+            rio_t rp;
+            rio_readinit(&rp, temp_sock);
+            ssize_t n1 = rio_readn(&rp, &rep_head_in, sizeof(rep_head_in));
+            ssize_t n2 = rio_readn(&rp, &rep_body_in, sizeof(rep_body_in));
 
             // 4. 把 Node 0 给我的数据，写入我的内存 (page_ptr)
             if (rep_head_in.unused == 1) {
                 // 将数据落盘到我的共享内存
                 memcpy(page_ptr, rep_body_in.pagedata, DSM_PAGE_SIZE);
-                dsm_header_t update_head = {0};
-                update_head.type = DSM_MSG_OWNER_UPDATE; // 确保 protocol.h 有这个
-                update_head.src_node_id = dsm_getnodeid();
-                update_head.payload_len = sizeof(payload_owner_update_t);
-                
-                payload_owner_update_t update_body;
-                update_body.resource_id = body.page_index;
-                update_body.new_owner_id = dsm_getnodeid(); // 声明：现在归我了
-                
-                send(temp_sock, &update_head, sizeof(update_head), 0);
-                send(temp_sock, &update_body, sizeof(update_body), 0);
-                
+                  
             }
             close(temp_sock);
 
+            dsm_header_t rep_head = {0};
+            rep_head.type = DSM_MSG_PAGE_REP;
+            rep_head.src_node_id = dsm_getnodeid();
+            rep_head.seq_num = head.seq_num;
+            rep_head.payload_len = sizeof(payload_page_rep_t); 
+            rep_head.unused = 1; //
             
-           auto* record = ::PageTable->Find(body.page_index);
+            payload_page_rep_t rep_body;
+            rep_body.real_owner_id = current_owner;//垃圾信息
+            memcpy(rep_body.pagedata, page_ptr, DSM_PAGE_SIZE);
 
-            // 2. 只有当记录存在时，才去更新 Owner
-            if (record != nullptr) {
-                
-                
-                // 只有 record 有效才能写！
-                record->owner_id = dsm_getnodeid(); 
-                
-                ::PageTable->LocalMutexUnlock(body.page_index);
-            } else {
-                // 如果表里没这条记录（Node 1 只是临时转发，没注册这一页），直接放锁
-                ::PageTable->LocalMutexUnlock(body.page_index);
-            }
-            rep_head_in.src_node_id = dsm_getnodeid();
-            send(sock, &rep_head_in, sizeof(rep_head_in), 0);
-            send(sock, &rep_body_in, sizeof(rep_body_in), 0);
+        // 【新增日志】
+            std::cout << "[DSM] Node " << dsm_getnodeid() << " (Owner) serving Page " 
+                    << body.page_index << " to Node " << head.src_node_id << std::endl;
+            send(sock, (const char*)&rep_head, sizeof(rep_head), 0);
+            send(sock, (const char*)&rep_body, sizeof(rep_body), 0);
+        
         } else {
             std::cerr << "[DSM] Failed to connect to Node 0" << std::endl;
         }

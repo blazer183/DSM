@@ -19,19 +19,14 @@ void process_owner_update(int sock, const dsm_header_t& head, const payload_owne
     
     uint32_t res_id = body.resource_id;
     int new_owner = body.new_owner_id;
-
-    ::PageTable->GlobalMutexLock();
-
     auto* record = ::PageTable->Find(res_id);
-
-    ::PageTable->LocalMutexLock(res_id);
-    ::PageTable->GlobalMutexUnlock();
-
     record->owner_id = new_owner;
 
     ::PageTable->LocalMutexUnlock(res_id);
 
     return;
+
+    
     
 }
 
