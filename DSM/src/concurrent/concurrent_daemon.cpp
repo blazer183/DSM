@@ -298,14 +298,14 @@ static bool handle_page_require(int connfd, const dsm_header_t &header, rio_t &r
     }
     int owner_id = record->owner_id;
     // 2. Release global lock
-    PageTable->GlobalMutexUnlock();
+   
 
     // 3. Acquire local lock to ensure sequential access
     if (!PageTable->LocalMutexLock(VPN)) {
         std::cerr << "[DSM Daemon] Failed to lock page " << VPN << std::endl;
         return false;
     }
-    
+    PageTable->GlobalMutexUnlock();
     
     
     // Case 1: We are the real owner (owner_id == PodId)
@@ -313,24 +313,10 @@ static bool handle_page_require(int connfd, const dsm_header_t &header, rio_t &r
         std::cout << "[DSM Daemon] We are the owner of page " << VPN << ", sending page data" << std::endl;
         
         // Prepare a buffer for page data
-        char page_buffer[DSM_PAGE_SIZE];
-        std::memset(page_buffer, 0, DSM_PAGE_SIZE);
-        
-        // Get page record to check if it's bound to a file
-        PageTable->GlobalMutexLock();
-        PageRecord* rec = PageTable->Find(VPN);
-        if (rec != nullptr && rec->fd >= 0 && !rec->filepath.empty()) {
-            // This page is bound to a file, read data from file
-            off_t file_offset = static_cast<off_t>(rec->offset) * DSM_PAGE_SIZE;
-            if (lseek(rec->fd, file_offset, SEEK_SET) >= 0) {
-                ssize_t bytes_read = read(rec->fd, page_buffer, DSM_PAGE_SIZE);
-                if (bytes_read < 0) {
-                    std::cerr << "[DSM Daemon] Failed to read file data for page " << VPN << std::endl;
-                }
-                // If less than page size, rest is already zero-filled
-            }
-        }
-        PageTable->GlobalMutexUnlock();
+        char page_buffer[PAGESIZE];
+        std::memset(page_buffer, 0, PAGESIZE);
+        uintptr_t page_add = static_cast<uintptr_t>(VPN) << 12;
+        std::memcpy(page_buffer, reinterpret_cast<void*>(page_add), PAGESIZE);
         
         // Send page data
         dsm_header_t rep_header = {
@@ -449,17 +435,39 @@ static bool handle_page_require(int connfd, const dsm_header_t &header, rio_t &r
     }
     // Case 3: First access and we are Pod 0 (owner_id == -1 && PodId == 0)
     else if (owner_id == -1 && PodId == 0) {
-        std::cout << "[DSM Daemon] First access on Pod 0" << std::endl;
+        std::cout << "[DSM Daemon] First access on Pod 0, loading from file" << std::endl;
         
-        // Send zero-filled page
+        // Prepare page buffer
         char page_buffer[DSM_PAGE_SIZE];
         std::memset(page_buffer, 0, DSM_PAGE_SIZE);
         
-        // Update PageTable to mark ourselves as owner
+        // Try to read from file if this page is bound to a file
         PageTable->GlobalMutexLock();
         PageRecord* rec = PageTable->Find(VPN);
-        if (rec != nullptr) {
-            rec->owner_id = 0;  // Mark Pod 0 as owner
+        if (rec != nullptr && rec->fd >= 0 && !rec->filepath.empty()) {
+            // This page is bound to a file, read data from file
+            // rec->offset is the page number, need to multiply by page size
+            off_t file_offset = static_cast<off_t>(rec->offset) * DSM_PAGE_SIZE;
+            std::cout << "[DSM Daemon] Reading from file: " << rec->filepath 
+                     << " at page " << rec->offset << " (byte offset " << file_offset << ")" << std::endl;
+            
+            if (lseek(rec->fd, file_offset, SEEK_SET) >= 0) {
+                ssize_t bytes_read = read(rec->fd, page_buffer, DSM_PAGE_SIZE);
+                if (bytes_read < 0) {
+                    std::cerr << "[DSM Daemon] Failed to read file data for page " << VPN << std::endl;
+                } else {
+                    std::cout << "[DSM Daemon] Successfully read " << bytes_read 
+                             << " bytes from file" << std::endl;
+                }
+                // If less than page size, rest is already zero-filled
+            } else {
+                std::cerr << "[DSM Daemon] Failed to seek in file for page " << VPN << std::endl;
+            }
+            
+            // Update owner to Pod 0 after loading
+            rec->owner_id = 0;
+        } else {
+            std::cout << "[DSM Daemon] Page not bound to file, sending zero-filled page" << std::endl;
         }
         PageTable->GlobalMutexUnlock();
         

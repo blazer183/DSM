@@ -429,15 +429,9 @@ void* dsm_malloc(const char *name, int * num){
             record->filepath = filepath;
             record->fd = fd;
             record->offset = i;
-            record->owner_id = 0;  // Pod 0 is the owner initially
+            record->owner_id = -1;  
         } else {
-            // Create new record if not found
-            PageRecord new_record;
-            new_record.filepath = filepath;
-            new_record.fd = fd;
-            new_record.offset = i;
-            new_record.owner_id = 0;
-            PageTable->Insert(pagebasenumber + i, new_record);
+            std::cout<<"error: no pagetable found!" << std::endl;
         }
     }
     PageTable->GlobalMutexUnlock();

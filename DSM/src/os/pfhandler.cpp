@@ -111,59 +111,6 @@ void pull_remote_page(int VPN){
     // Calculate page base address
     uintptr_t page_base = static_cast<uintptr_t>(VPN) << 12;
     
-    // Check if we are the owner and can load directly from file
-    if (PageTable != nullptr) {
-        PageTable->GlobalMutexLock();
-        PageRecord* record = PageTable->Find(VPN);
-        if (record != nullptr && record->owner_id == PodId) {
-            // We are the owner, check if page is bound to a file
-            if (record->fd >= 0 && !record->filepath.empty()) {
-                // Load directly from file
-                // Note: Using stack allocation for buffer is consistent with existing code
-                // and runs on alternate signal stack (SIGSTKSZ)
-                char page_buffer[DSM_PAGE_SIZE];
-                std::memset(page_buffer, 0, DSM_PAGE_SIZE);  // Zero-fill for partial reads
-                
-                off_t file_offset = static_cast<off_t>(record->offset) * DSM_PAGE_SIZE;
-                off_t seek_result = lseek(record->fd, file_offset, SEEK_SET);
-                if (seek_result == static_cast<off_t>(-1)) {
-                    std::cerr << "[pull_remote_page] Failed to seek file for page " << VPN 
-                              << ": " << std::strerror(errno) << std::endl;
-                    PageTable->GlobalMutexUnlock();
-                    return;
-                }
-                
-                ssize_t bytes_read = read(record->fd, page_buffer, DSM_PAGE_SIZE);
-                if (bytes_read < 0) {
-                    std::cerr << "[pull_remote_page] Failed to read file data for page " << VPN 
-                              << ": " << std::strerror(errno) << std::endl;
-                    PageTable->GlobalMutexUnlock();
-                    return;
-                }
-                // Note: partial reads (0 <= bytes_read < DSM_PAGE_SIZE) are OK - 
-                // remaining buffer is already zero-filled from memset above
-                PageTable->GlobalMutexUnlock();
-                
-                // Make the page writable and copy data
-                if (mprotect((void*)page_base, g_page_sz, PROT_READ | PROT_WRITE) != 0) {
-                    std::cerr << "[pull_remote_page] mprotect failed for local page" << std::endl;
-                    return;
-                }
-                std::memcpy((void*)page_base, page_buffer, DSM_PAGE_SIZE);
-                std::cout << "[System information] Page " << VPN << " loaded directly from file (owner)" << std::endl;
-                return;
-            } else {
-                // We are owner but page is not bound to file, just make it writable
-                PageTable->GlobalMutexUnlock();
-                if (mprotect((void*)page_base, g_page_sz, PROT_READ | PROT_WRITE) != 0) {
-                    std::cerr << "[pull_remote_page] mprotect failed for local page" << std::endl;
-                }
-                return;
-            }
-        }
-        PageTable->GlobalMutexUnlock();
-    }
-    
     // Retry loop for following redirects to real owner
     while (true) {
         // Get socket to probable owner
@@ -263,6 +210,21 @@ void pull_remote_page(int VPN){
         
         // Copy page data to memory (equivalent to DMA)
         std::memcpy((void*)page_base, page_buffer, DSM_PAGE_SIZE);
+
+        // Update local PageTable: set this node as the owner of the page
+        if (PageTable != nullptr) {
+            PageTable->GlobalMutexLock();
+            PageRecord* page_rec = PageTable->Find(VPN);
+            if (page_rec != nullptr) {
+                page_rec->owner_id = PodId;  // Set ourselves as the new owner
+            } else {
+                // If record doesn't exist, create it
+                PageRecord new_record;
+                new_record.owner_id = PodId;
+                PageTable->Insert(VPN, new_record);
+            }
+            PageTable->GlobalMutexUnlock();
+        }
         
         // Send OWNER_UPDATE to the manager (the original probable owner, not the redirected one)
         std::string manager_ip = GetPodIp(manager_id);
