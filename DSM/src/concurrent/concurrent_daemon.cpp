@@ -13,7 +13,7 @@
 #include "net/protocol.h"
 #include "dsm.h"
 
-// Global state for JOIN barrier synchronization
+
 
 std::mutex join_mutex;                  // Protects shared state
 std::vector<int> joined_fds;           // Connected client sockets (bidirectional channels)
@@ -21,18 +21,9 @@ bool barrier_ready = false;            // Whether all processes have joined
 int joined_count = 0;                  // Counter for joined processes (protected by join_mutex)
 
 
-// Forward declarations for message handlers
-static bool handle_join_request(int connfd, const dsm_header_t &header);
-static bool handle_lock_acquire(int connfd, const dsm_header_t &header, rio_t &rp);
-static bool handle_lock_release(int connfd, const dsm_header_t &header, rio_t &rp);
-static bool handle_owner_update(int connfd, const dsm_header_t &header, rio_t &rp);
-static bool handle_page_require(int connfd, const dsm_header_t &header, rio_t &rp);
-static bool handle_unknown_message(int connfd, const dsm_header_t &header);
-
-
-static bool handle_join_request(int connfd, const dsm_header_t &header) {
+void process_join_req(int sock, const dsm_header_t &head) {
     // Extract source node ID from header
-    uint16_t src_node = ntohs(header.src_node_id);
+    uint16_t src_node = ntohs(head.src_node_id);
     
     std::cout << "[DSM Daemon] Received JOIN_REQ: NodeId=" << src_node << std::endl;
 
@@ -42,7 +33,7 @@ static bool handle_join_request(int connfd, const dsm_header_t &header) {
     // Check if this fd is already in the joined list
     bool already_joined = false;
     for (int fd : joined_fds) {
-        if (fd == connfd) {
+        if (fd == sock) {
             already_joined = true;
             break;
         }
@@ -50,17 +41,17 @@ static bool handle_join_request(int connfd, const dsm_header_t &header) {
     
     // Add to joined_fds if not already present
     if (!already_joined) {
-        joined_fds.push_back(connfd);
+        joined_fds.push_back(sock);
     }
     
     joined_count++;
     
-    std::cout << "[DSM Daemon] Currently connected: socket number " << connfd << std::endl;
+    std::cout << "[DSM Daemon] Currently connected: socket number " << sock << std::endl;
 
     // Check if all processes have joined
     if (joined_count < ProcNum) {
         join_mutex.unlock();
-        return true;  // Keep connection open and continue processing
+        return;  // Keep connection open and continue processing
     }
     
     // All processes have joined, broadcast JOIN_ACK to all
@@ -88,37 +79,35 @@ static bool handle_join_request(int connfd, const dsm_header_t &header) {
     std::cout << "[DSM Daemon] Barrier synchronization complete!" << std::endl;
     
     join_mutex.unlock();
-    
-    return true;  // Keep connection open for future messages
 }
 
-static bool handle_lock_acquire(int connfd, const dsm_header_t &header, rio_t &rp) {
+void process_lock_acq(int sock, const dsm_header_t &head, rio_t &rp) {
     /*pseudo code:
     //请你查看以下代码是否按照以下原则进行：
     1.对大表的增删查改必须获取全局锁
-    2.一旦查到某个数据存在，想要读/修改某个值，必须释放全局锁，获取局部锁
-    所以锁的调用链是这样：
-    获取全局锁-查表某个原子是否存在-释放全局锁-获取局部锁-等待对应进程再发送消息（释放锁）并更新-释放局部锁
+    2.一旦查到某个数据存在,想要读/修改某个值,必须释放全局锁,获取局部锁
+    所以锁的调用链是这样:
+    获取全局锁-查表某个原子是否存在-释放全局锁-获取局部锁-等待对应进程再发送消息(释放锁)并更新-释放局部锁
     */
 
 
 
     // Read the payload to get lock_id
-    uint32_t payload_len = ntohl(header.payload_len);
+    uint32_t payload_len = ntohl(head.payload_len);
     if (payload_len < sizeof(payload_lock_req_t)) {
         std::cerr << "[DSM Daemon] Invalid LOCK_ACQ payload length" << std::endl;
-        return false;
+        return;
     }
 
     payload_lock_req_t req_payload;
     if (rio_readn(&rp, &req_payload, sizeof(req_payload)) != sizeof(req_payload)) {
         std::cerr << "[DSM Daemon] Failed to read LOCK_ACQ payload" << std::endl;
-        return false;
+        return;
     }
 
     uint32_t lock_id = ntohl(req_payload.lock_id);
-    uint16_t requester_id = ntohs(header.src_node_id);
-    uint32_t seq_num = ntohl(header.seq_num);
+    uint16_t requester_id = ntohs(head.src_node_id);
+    uint32_t seq_num = ntohl(head.seq_num);
 
     std::cout << "[DSM Daemon] Received LOCK_ACQ for lock " << lock_id 
               << " from NodeId=" << requester_id << std::endl;
@@ -136,7 +125,7 @@ static bool handle_lock_acquire(int connfd, const dsm_header_t &header, rio_t &r
     // Block until we acquire the pthread mutex for this lock
     if (!LockTable->LocalMutexLock(lock_id)) {
         std::cerr << "[DSM Daemon] LocalMutexLock failed for lock " << lock_id << std::endl;
-        return false;
+        return;
     }
 
     
@@ -159,57 +148,55 @@ static bool handle_lock_acquire(int connfd, const dsm_header_t &header, rio_t &r
         htonl(payload_len_rep)
     };
 
-    if (::send(connfd, &rep_header, sizeof(rep_header), 0) != sizeof(rep_header)) {
+    if (::send(sock, &rep_header, sizeof(rep_header), 0) != sizeof(rep_header)) {
         std::cerr << "[DSM Daemon] Failed to send LOCK_REP header" << std::endl;
         // Unlock the mutex before returning
         LockTable->LocalMutexUnlock(lock_id);
-        return false;
+        return;
     }
 
     // Send invalid_set_count
     uint32_t invalid_count_net = htonl(invalid_count);
-    if (::send(connfd, &invalid_count_net, sizeof(invalid_count_net), 0) != sizeof(invalid_count_net)) {
+    if (::send(sock, &invalid_count_net, sizeof(invalid_count_net), 0) != sizeof(invalid_count_net)) {
         std::cerr << "[DSM Daemon] Failed to send invalid_set_count" << std::endl;
         // Unlock the mutex before returning
         LockTable->LocalMutexUnlock(lock_id);
-        return false;
+        return;
     }
 
     // Send invalid page list
     for (int page_idx : invalid_pages) {
         uint32_t page_idx_net = htonl(page_idx);
-        if (::send(connfd, &page_idx_net, sizeof(page_idx_net), 0) != sizeof(page_idx_net)) {
+        if (::send(sock, &page_idx_net, sizeof(page_idx_net), 0) != sizeof(page_idx_net)) {
             std::cerr << "[DSM Daemon] Failed to send invalid page index" << std::endl;
             // Unlock the mutex before returning
             LockTable->LocalMutexUnlock(lock_id);
-            return false;
+            return;
         }
     }
 
     std::cout << "[DSM Daemon] Lock " << lock_id << " granted and held by NodeId=" << requester_id << std::endl;
-
-    return true;  // Continue processing other messages
 }
 
-static bool handle_lock_release(int connfd, const dsm_header_t &header, rio_t &rp) {
+void process_lock_rls(int sock, const dsm_header_t &head, rio_t &rp) {
     // Read the release payload
-    uint32_t payload_len = ntohl(header.payload_len);
+    uint32_t payload_len = ntohl(head.payload_len);
     if (payload_len < sizeof(payload_lock_rls_t)) {
         std::cerr << "[DSM Daemon] Invalid LOCK_RLS payload length" << std::endl;
-        return false;
+        return;
     }
 
     // Read the payload structure (invalid_set_count and lock_id)
     payload_lock_rls_t rls_payload;
     if (rio_readn(&rp, &rls_payload, sizeof(rls_payload)) != sizeof(rls_payload)) {
         std::cerr << "[DSM Daemon] Failed to read LOCK_RLS payload" << std::endl;
-        return false;
+        return;
     }
     
     uint32_t rls_invalid_count = ntohl(rls_payload.invalid_set_count);
     uint32_t lock_id = ntohl(rls_payload.lock_id);
-    uint16_t src_node = ntohs(header.src_node_id);
-    uint32_t seq_num = ntohl(header.seq_num);
+    uint16_t src_node = ntohs(head.src_node_id);
+    uint32_t seq_num = ntohl(head.seq_num);
     
     // Read invalid page list
     std::vector<int> new_invalid_pages;
@@ -249,14 +236,12 @@ static bool handle_lock_release(int connfd, const dsm_header_t &header, rio_t &r
         0
     };
     
-    if (::send(connfd, &ack, sizeof(ack), 0) != sizeof(ack)) {
+    if (::send(sock, &ack, sizeof(ack), 0) != sizeof(ack)) {
         std::cerr << "[DSM Daemon] Failed to send ACK for LOCK_RLS" << std::endl;
-        return false;
+        return;
     }
 
     std::cout << "[DSM Daemon] Sent ACK for LOCK_RLS" << std::endl;
-
-    return true;
 }
 
 static bool handle_unknown_message(int connfd, const dsm_header_t &header) {
@@ -266,23 +251,23 @@ static bool handle_unknown_message(int connfd, const dsm_header_t &header) {
     return false;
 }
 
-static bool handle_page_require(int connfd, const dsm_header_t &header, rio_t &rp) {
+void process_page_req(int sock, const dsm_header_t &head, rio_t &rp) {
     // Read payload to get VPN
-    uint32_t payload_len = ntohl(header.payload_len);
+    uint32_t payload_len = ntohl(head.payload_len);
     if (payload_len < sizeof(payload_page_req_t)) {
         std::cerr << "[DSM Daemon] Invalid PAGE_REQ payload length" << std::endl;
-        return false;
+        return;
     }
     
     payload_page_req_t req_payload;
     if (rio_readn(&rp, &req_payload, sizeof(req_payload)) != sizeof(req_payload)) {
         std::cerr << "[DSM Daemon] Failed to read PAGE_REQ payload" << std::endl;
-        return false;
+        return;
     }
     
     uint32_t VPN = ntohl(req_payload.page_index);
-    uint16_t requester_id = ntohs(header.src_node_id);
-    uint32_t seq_num = ntohl(header.seq_num);
+    uint16_t requester_id = ntohs(head.src_node_id);
+    uint32_t seq_num = ntohl(head.seq_num);
     
     std::cout << "[DSM Daemon] Received PAGE_REQ for page " << VPN 
               << " from NodeId=" << requester_id << std::endl;
@@ -294,7 +279,7 @@ static bool handle_page_require(int connfd, const dsm_header_t &header, rio_t &r
     if (record == nullptr) {
         std::cerr << "[DSM Daemon] Error: page " << VPN << " beyond shared space" << std::endl;
         PageTable->GlobalMutexUnlock();
-        return false;
+        return;
     }
     int owner_id = record->owner_id;
     // 2. Release global lock
@@ -303,7 +288,7 @@ static bool handle_page_require(int connfd, const dsm_header_t &header, rio_t &r
     // 3. Acquire local lock to ensure sequential access
     if (!PageTable->LocalMutexLock(VPN)) {
         std::cerr << "[DSM Daemon] Failed to lock page " << VPN << std::endl;
-        return false;
+        return;
     }
     PageTable->GlobalMutexUnlock();
     
@@ -327,29 +312,29 @@ static bool handle_page_require(int connfd, const dsm_header_t &header, rio_t &r
             htonl(sizeof(uint16_t) + DSM_PAGE_SIZE)
         };
         
-        if (::send(connfd, &rep_header, sizeof(rep_header), 0) != sizeof(rep_header)) {
+        if (::send(sock, &rep_header, sizeof(rep_header), 0) != sizeof(rep_header)) {
             std::cerr << "[DSM Daemon] Failed to send PAGE_REP header" << std::endl;
             PageTable->LocalMutexUnlock(VPN);
-            return false;
+            return;
         }
         
         // Send real_owner_id (ourselves)
         uint16_t real_owner_net = htons(PodId);
-        if (::send(connfd, &real_owner_net, sizeof(real_owner_net), 0) != sizeof(real_owner_net)) {
+        if (::send(sock, &real_owner_net, sizeof(real_owner_net), 0) != sizeof(real_owner_net)) {
             std::cerr << "[DSM Daemon] Failed to send real_owner_id" << std::endl;
             PageTable->LocalMutexUnlock(VPN);
-            return false;
+            return;
         }
         
         // Send page data from buffer
-        if (::send(connfd, page_buffer, DSM_PAGE_SIZE, 0) != DSM_PAGE_SIZE) {
+        if (::send(sock, page_buffer, DSM_PAGE_SIZE, 0) != DSM_PAGE_SIZE) {
             std::cerr << "[DSM Daemon] Failed to send page data" << std::endl;
             PageTable->LocalMutexUnlock(VPN);
-            return false;
+            return;
         }
         
         PageTable->LocalMutexUnlock(VPN);
-        return true;
+        return;
     }
     // Case 2: First access and we are not Pod 0 (owner_id == -1 && PodId != 0)
     else if (owner_id == -1 && PodId != 0) {
@@ -363,7 +348,7 @@ static bool handle_page_require(int connfd, const dsm_header_t &header, rio_t &r
         if (pod0_sock < 0) {
             std::cerr << "[DSM Daemon] Failed to create socket for Pod 0" << std::endl;
             PageTable->LocalMutexUnlock(VPN);
-            return false;
+            return;
         }
         
         struct sockaddr_in server_addr;
@@ -376,7 +361,7 @@ static bool handle_page_require(int connfd, const dsm_header_t &header, rio_t &r
             std::cerr << "[DSM Daemon] Failed to connect to Pod 0" << std::endl;
             close(pod0_sock);
             PageTable->LocalMutexUnlock(VPN);
-            return false;
+            return;
         }
         
         // Send PAGE_REQ to Pod 0
@@ -400,7 +385,7 @@ static bool handle_page_require(int connfd, const dsm_header_t &header, rio_t &r
             std::cerr << "[DSM Daemon] Failed to receive response from Pod 0" << std::endl;
             close(pod0_sock);
             PageTable->LocalMutexUnlock(VPN);
-            return false;
+            return;
         }
         
         // Read page data from Pod 0
@@ -412,7 +397,7 @@ static bool handle_page_require(int connfd, const dsm_header_t &header, rio_t &r
             std::cerr << "[DSM Daemon] Failed to read page data from Pod 0" << std::endl;
             close(pod0_sock);
             PageTable->LocalMutexUnlock(VPN);
-            return false;
+            return;
         }
         
         close(pod0_sock);
@@ -426,12 +411,12 @@ static bool handle_page_require(int connfd, const dsm_header_t &header, rio_t &r
             htonl(sizeof(uint16_t) + DSM_PAGE_SIZE)
         };
         
-        ::send(connfd, &rep_header, sizeof(rep_header), 0);
-        ::send(connfd, &real_owner_id, sizeof(real_owner_id), 0);
-        ::send(connfd, page_buffer, DSM_PAGE_SIZE, 0);
+        ::send(sock, &rep_header, sizeof(rep_header), 0);
+        ::send(sock, &real_owner_id, sizeof(real_owner_id), 0);
+        ::send(sock, page_buffer, DSM_PAGE_SIZE, 0);
         
         PageTable->LocalMutexUnlock(VPN);
-        return true;
+        return;
     }
     // Case 3: First access and we are Pod 0 (owner_id == -1 && PodId == 0)
     else if (owner_id == -1 && PodId == 0) {
@@ -480,14 +465,14 @@ static bool handle_page_require(int connfd, const dsm_header_t &header, rio_t &r
             htonl(sizeof(uint16_t) + DSM_PAGE_SIZE)
         };
         
-        ::send(connfd, &rep_header, sizeof(rep_header), 0);
+        ::send(sock, &rep_header, sizeof(rep_header), 0);
         
         uint16_t real_owner_net = htons(0);
-        ::send(connfd, &real_owner_net, sizeof(real_owner_net), 0);
-        ::send(connfd, page_buffer, DSM_PAGE_SIZE, 0);
+        ::send(sock, &real_owner_net, sizeof(real_owner_net), 0);
+        ::send(sock, page_buffer, DSM_PAGE_SIZE, 0);
         
         PageTable->LocalMutexUnlock(VPN);
-        return true;
+        return;
     }
     // Case 4: We are not the owner (owner_id != PodId and owner_id != -1)
     else {
@@ -502,42 +487,42 @@ static bool handle_page_require(int connfd, const dsm_header_t &header, rio_t &r
             htonl(sizeof(uint16_t))  // Only sending real_owner_id, no page data
         };
         
-        if (::send(connfd, &rep_header, sizeof(rep_header), 0) != sizeof(rep_header)) {
+        if (::send(sock, &rep_header, sizeof(rep_header), 0) != sizeof(rep_header)) {
             std::cerr << "[DSM Daemon] Failed to send PAGE_REP header (redirect)" << std::endl;
             PageTable->LocalMutexUnlock(VPN);
-            return false;
+            return;
         }
         
         // Send real_owner_id
         uint16_t real_owner_net = htons(owner_id);
-        if (::send(connfd, &real_owner_net, sizeof(real_owner_net), 0) != sizeof(real_owner_net)) {
+        if (::send(sock, &real_owner_net, sizeof(real_owner_net), 0) != sizeof(real_owner_net)) {
             std::cerr << "[DSM Daemon] Failed to send real_owner_id (redirect)" << std::endl;
             PageTable->LocalMutexUnlock(VPN);
-            return false;
+            return;
         }
         
         PageTable->LocalMutexUnlock(VPN);
-        return true;
+        return;
     }
 }
 
-static bool handle_owner_update(int connfd, const dsm_header_t &header, rio_t &rp) {
+void process_owner_update(int sock, const dsm_header_t &head, rio_t &rp) {
     // Read payload to get VPN and new_owner_id
-    uint32_t payload_len = ntohl(header.payload_len);
+    uint32_t payload_len = ntohl(head.payload_len);
     if (payload_len < sizeof(payload_owner_update_t)) {
         std::cerr << "[DSM Daemon] Invalid OWNER_UPDATE payload length" << std::endl;
-        return false;
+        return;
     }
     
     payload_owner_update_t update_payload;
     if (rio_readn(&rp, &update_payload, sizeof(update_payload)) != sizeof(update_payload)) {
         std::cerr << "[DSM Daemon] Failed to read OWNER_UPDATE payload" << std::endl;
-        return false;
+        return;
     }
     
     uint32_t VPN = ntohl(update_payload.resource_id);
     uint16_t new_owner = ntohs(update_payload.new_owner_id);
-    uint32_t seq_num = ntohl(header.seq_num);
+    uint32_t seq_num = ntohl(head.seq_num);
     
     std::cout << "[DSM Daemon] Received OWNER_UPDATE for page " << VPN 
               << ", new owner: NodeId=" << new_owner << std::endl;
@@ -545,7 +530,7 @@ static bool handle_owner_update(int connfd, const dsm_header_t &header, rio_t &r
     // Lock the page for exclusive access
     if (!PageTable->LocalMutexLock(VPN)) {
         std::cerr << "[DSM Daemon] Failed to lock page " << VPN << std::endl;
-        return false;
+        return;
     }
     
     // Update page table with new owner
@@ -578,12 +563,10 @@ static bool handle_owner_update(int connfd, const dsm_header_t &header, rio_t &r
         0
     };
     
-    if (::send(connfd, &ack, sizeof(ack), 0) != sizeof(ack)) {
+    if (::send(sock, &ack, sizeof(ack), 0) != sizeof(ack)) {
         std::cerr << "[DSM Daemon] Failed to send ACK for OWNER_UPDATE" << std::endl;
-        return false;
+        return;
     }
-    
-    return true;
 }
 
 void peer_handler(int connfd) {
@@ -610,19 +593,19 @@ void peer_handler(int connfd) {
         bool keep_processing = true;
         switch (header.type) {
             case DSM_MSG_JOIN_REQ:
-                keep_processing = handle_join_request(connfd, header);
+                process_join_req(connfd, header);
                 break;
             case DSM_MSG_LOCK_ACQ:
-                keep_processing = handle_lock_acquire(connfd, header, rp);
+                process_lock_acq(connfd, header, rp);
                 break;
             case DSM_MSG_LOCK_RLS:
-                keep_processing = handle_lock_release(connfd, header, rp);
+                process_lock_rls(connfd, header, rp);
                 break;
             case DSM_MSG_OWNER_UPDATE:
-                keep_processing = handle_owner_update(connfd, header, rp);
+                process_owner_update(connfd, header, rp);
                 break;
             case DSM_MSG_PAGE_REQ:
-                keep_processing = handle_page_require(connfd, header, rp);
+                process_page_req(connfd, header, rp);
                 break;
             default:
                 keep_processing = handle_unknown_message(connfd, header);

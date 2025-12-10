@@ -7,35 +7,40 @@
 #include <condition_variable> 
 #include <vector>
 #include "os/page_table.h"
-#include "os/lock_table.h"  // ×¢ÒâÎÄ¼şÃû´óĞ¡Ğ´ÒªºÍÊµ¼ÊÎÄ¼şÒ»ÖÂ
+#include "os/lock_table.h"  // æ³¨æ„æ–‡ä»¶åå¤§å°å†™è¦å’Œå®é™…æ–‡ä»¶ä¸€è‡´
 #include "os/bind_table.h"
 #include "os/table_base.hpp"
 #include "net/protocol.h" 
 
 // [0x01] DSM_MSG_JOIN_REQ
-// ½ÓÊÕÕß£ºManager (Leader)
-// ×÷ÓÃ£º¼ÇÂ¼ĞÂ½Úµã£¬·ÖÅäID£¬×¼±¸»Ø¸´ ACK
+// æ¥æ”¶è€…ï¼šManager (Leader)
+// ä½œç”¨ï¼šè®°å½•æ–°èŠ‚ç‚¹ï¼Œåˆ†é…IDï¼Œå‡†å¤‡å›å¤ ACK
 void process_join_req(int sock, const dsm_header_t& head);
 
 // [0x10] DSM_MSG_PAGE_REQ
-// ½ÓÊÕÕß£ºManager »ò Owner
-// ×÷ÓÃ£º
-// 1. Èç¹ûÎÒÊÇ Owner£ºÖ±½Ó·¢»Ø DSM_MSG_PAGE_REP (´øÊı¾İ, unused=1)
-// 2. Èç¹ûÎÒ²»ÊÇ£º·¢»Ø DSM_MSG_PAGE_REP (´øÖØ¶¨ÏòID, unused=0)
-void process_page_req(int sock, const dsm_header_t& head, const payload_page_req_t& body);
+// æ¥æ”¶è€…ï¼šManager æˆ– Owner
+// ä½œç”¨ï¼š
+// 1. å¦‚æœæˆ‘æ˜¯ Ownerï¼šç›´æ¥å‘å› DSM_MSG_PAGE_REP (å¸¦æ•°æ®, unused=1)
+// 2. å¦‚æœæˆ‘ä¸æ˜¯ï¼šå‘å› DSM_MSG_PAGE_REP (å¸¦é‡å®šå‘ID, unused=0)
+void process_page_req(int sock, const dsm_header_t& head, rio_t &rp);
 
 // [0x20] DSM_MSG_LOCK_ACQ
-// ½ÓÊÕÕß£ºManager
-// ×÷ÓÃ£º²é LockTable£¬Èç¹û¿ÕÏĞÔòÊÚÓè (·¢LOCK_REP)£¬Èç¹ûÕ¼ÓÃÔò¼ÓÈë¶ÓÁĞ
-void process_lock_acq(int sock, const dsm_header_t& head, const payload_lock_req_t& body);
+// æ¥æ”¶è€…ï¼šManager
+// ä½œç”¨ï¼šæŸ¥ LockTableï¼Œå¦‚æœç©ºé—²åˆ™æˆäºˆ (å‘LOCK_REP)ï¼Œå¦‚æœå ç”¨åˆ™åŠ å…¥é˜Ÿåˆ—
+void process_lock_acq(int sock, const dsm_header_t& head, rio_t &rp);
+
+
+
+
+void process_lock_rls(int sock, const dsm_header_t& head, rio_t &rp);
 
 // [0x30] DSM_MSG_OWNER_UPDATE
-// ½ÓÊÕÕß£ºManager
-// ×÷ÓÃ£ºÊÕµ½ RealOwner µÄÍ¨Öª£¬¸üĞÂ Directory ÖĞµÄ owner_id
-void process_owner_update(int sock, const dsm_header_t& head, const payload_owner_update_t& body);
+// æ¥æ”¶è€…ï¼šManager
+// ä½œç”¨ï¼šæ”¶åˆ° RealOwner çš„é€šçŸ¥ï¼Œæ›´æ–° Directory ä¸­çš„ owner_id
+void process_owner_update(int sock, const dsm_header_t& head, rio_t &rp);
 
 // =========================================================================
-// 2. ¼àÌı·şÎñÈë¿Ú (Daemon)
+// 2. ç›‘å¬æœåŠ¡å…¥å£ (Daemon)
 // =========================================================================
 void dsm_start_daemon(int port);
 void peer_handler(int connfd); 
