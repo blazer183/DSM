@@ -27,7 +27,7 @@ void process_join_req(int sock, const dsm_header_t& head) {
 
     // 1. 构造回复 (ACK) 只回复头
     dsm_header_t ack_head = {0};
-    ack_head.type = DSM_MSG_JOIN_ACK;
+    ack_head.type = DSM_MSG_ACK ;
     ack_head.src_node_id = 0;
     ack_head.seq_num = head.seq_num;
     ack_head.payload_len = 0;

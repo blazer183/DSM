@@ -1,0 +1,3 @@
+/mnt/d/Ccode/DSM/tests/concurrent/build/CMakeFiles/dsm_test.dir
+/mnt/d/Ccode/DSM/tests/concurrent/build/CMakeFiles/edit_cache.dir
+/mnt/d/Ccode/DSM/tests/concurrent/build/CMakeFiles/rebuild_cache.dir

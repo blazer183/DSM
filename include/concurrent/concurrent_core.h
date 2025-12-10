@@ -8,14 +8,13 @@
 #include <vector>
 #include "os/page_table.h"
 #include "os/lock_table.h"  // 注意文件名大小写要和实际文件一致
-#include "os/bind_table.h"
 #include "os/table_base.hpp"
 #include "net/protocol.h" 
 
 // [0x01] DSM_MSG_JOIN_REQ
 // 接收者：Manager (Leader)
 // 作用：记录新节点，分配ID，准备回复 ACK
-void process_join_req(int sock, const dsm_header_t& head, const payload_join_req_t& body);
+void process_join_req(int sock, const dsm_header_t& head);
 
 // [0x10] DSM_MSG_PAGE_REQ
 // 接收者：Manager 或 Owner
@@ -28,6 +27,11 @@ void process_page_req(int sock, const dsm_header_t& head, const payload_page_req
 // 接收者：Manager
 // 作用：查 LockTable，如果空闲则授予 (发LOCK_REP)，如果占用则加入队列
 void process_lock_acq(int sock, const dsm_header_t& head, const payload_lock_req_t& body);
+
+//[0x22] DSM_MSG_LOCK_RLS
+// 接收者：Manager
+// 作用：释放锁，通知队列中的下一个进程
+void process_lock_rls(int sock, const dsm_header_t& head, const payload_lock_rls_t& body);
 
 // [0x30] DSM_MSG_OWNER_UPDATE
 // 接收者：Manager

@@ -1,22 +1,22 @@
 #ifndef OS_PAGE_TABLE_H
 #define OS_PAGE_TABLE_H
 
-#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <string>
 #include <pthread.h>
 
 #include "os/table_base.hpp"
 
 struct PageRecord {
-    int owner_id { -1 };
-    int lock_id { 0 };              // 自增锁号，不必与页号一致
-    pthread_mutex_t mutex;          // 用于顺序访问的互斥锁
+    int owner_id { -1 };                  // 当前页的真正拥有者
+    pthread_mutex_t mutex;                // 用于互斥访问该页
+    std::string filepath;                 // 保存该页绑定的文件路径
+    int offset { 0 };                     // 保存页的偏移页数，真实偏移量为 offset * PAGESIZE
+    int fd { -1 };                        // 文件描述符，保持打开
 
-    PageRecord() noexcept
-        : owner_id(-1), lock_id(NextLockId())
-    {
+    PageRecord() noexcept {
         ::pthread_mutex_init(&mutex, nullptr);
     }
 
@@ -25,7 +25,10 @@ struct PageRecord {
     }
 
     PageRecord(const PageRecord &other)
-        : owner_id(other.owner_id), lock_id(other.lock_id)
+        : owner_id(other.owner_id),
+          filepath(other.filepath),
+          offset(other.offset),
+          fd(other.fd)
     {
         ::pthread_mutex_init(&mutex, nullptr);
     }
@@ -35,13 +38,18 @@ struct PageRecord {
             ::pthread_mutex_destroy(&mutex);
             ::pthread_mutex_init(&mutex, nullptr);
             owner_id = other.owner_id;
-            lock_id = other.lock_id;
+            filepath = other.filepath;
+            offset = other.offset;
+            fd = other.fd;
         }
         return *this;
     }
 
     PageRecord(PageRecord &&other) noexcept
-        : owner_id(other.owner_id), lock_id(other.lock_id)
+        : owner_id(other.owner_id),
+          filepath(std::move(other.filepath)),
+          offset(other.offset),
+          fd(other.fd)
     {
         ::pthread_mutex_init(&mutex, nullptr);
     }
@@ -51,24 +59,18 @@ struct PageRecord {
             ::pthread_mutex_destroy(&mutex);
             ::pthread_mutex_init(&mutex, nullptr);
             owner_id = other.owner_id;
-            lock_id = other.lock_id;
+            filepath = std::move(other.filepath);
+            offset = other.offset;
+            fd = other.fd;
         }
         return *this;
     }
-
-    int Lock() noexcept { return ::pthread_mutex_lock(&mutex); }
-    int Unlock() noexcept { return ::pthread_mutex_unlock(&mutex); }
-
-private:
-    static int NextLockId() noexcept {
-        static std::atomic<int> counter { 0 };
-        return ++counter;
-    }
 };
 
-class PageTable final : public TableBase<std::uintptr_t, PageRecord> {
+//键int不是虚拟地址 是虚拟页号
+class PageTable final : public TableBase<int, PageRecord> {
 public:
-    using Base = TableBase<std::uintptr_t, PageRecord>;
+    using Base = TableBase<int, PageRecord>;
 
     explicit PageTable(std::size_t capacity = 0)
         : Base(capacity == 0 ? std::numeric_limits<std::size_t>::max() : capacity)
@@ -81,47 +83,27 @@ public:
     using Base::Remove;
     using Base::Size;
     using Base::Update;
-    using Base::LockAcquire;
-    using Base::LockRelease;
+    using Base::GlobalMutexLock;    // 全局锁
+    using Base::GlobalMutexUnlock;
 
-    bool LockPage(std::uintptr_t page_addr) noexcept {
-        LockAcquire();
-        auto *record = Find(page_addr);
+    bool LocalMutexLock(int page_index) noexcept {
+        // 获取 page_index 对应的键的对应结构体的局部锁
+        auto *record = Find(page_index);
         if (record == nullptr) {
-            PageRecord new_record;
-            if (!Insert(page_addr, new_record)) {
-                LockRelease();
-                return false;
-            }
-            record = Find(page_addr);
-            if (record == nullptr) {
-                LockRelease();
-                return false;
-            }
-        }
-        int rc = record->Lock();
-        LockRelease();
-        return rc == 0;
-    }
-
-    bool UnlockPage(std::uintptr_t page_addr) noexcept {
-        LockAcquire();
-        auto *record = Find(page_addr);
-        if (record == nullptr) {
-            LockRelease();
             return false;
         }
-        int rc = record->Unlock();
-        LockRelease();
+        int rc = ::pthread_mutex_lock(&record->mutex);
         return rc == 0;
     }
 
-    int GetLockId(std::uintptr_t page_addr) noexcept {
-        LockAcquire();
-        auto *record = Find(page_addr);
-        int id = record ? record->lock_id : -1;
-        LockRelease();
-        return id;
+    bool LocalMutexUnlock(int page_index) noexcept {
+        // 释放 page_index 对应的键的对应结构体的局部锁
+        auto *record = Find(page_index);
+        if (record == nullptr) {
+            return false;
+        }
+        int rc = ::pthread_mutex_unlock(&record->mutex);
+        return rc == 0;
     }
 };
 

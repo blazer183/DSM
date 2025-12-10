@@ -60,7 +60,7 @@ void peer_handler(int connfd) {
         switch (header.type) {
             
             case DSM_MSG_JOIN_REQ:
-                process_join_req(connfd, header, *(payload_join_req_t*)buffer.data());
+                process_join_req(connfd, header);
                 break;
 
             case DSM_MSG_PAGE_REQ:
@@ -75,6 +75,11 @@ void peer_handler(int connfd) {
                 process_owner_update(connfd, header, *(payload_owner_update_t*)buffer.data());
                 break;
 
+                
+            case DSM_MSG_LOCK_RLS:
+                process_lock_rls(connfd, header, *(payload_lock_rls_t*)buffer.data());
+                break;
+                
             default:
                 std::cout << "[DSM] Unknown Msg Type: 0x" << std::hex << (int)header.type << std::dec << std::endl;
         }

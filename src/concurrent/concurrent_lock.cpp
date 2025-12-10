@@ -4,97 +4,63 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/socket.h>
-// ÒıÈëÍ·ÎÄ¼ş
+
 #include "concurrent/concurrent_core.h"
 #include "net/protocol.h"
 #include "dsm.h"
 #include "os/table_base.hpp"
+#include "os/lock_table.h"
 
-// ============================================================================
-// 1. ´¦ÀíËøÇëÇó (proowner²à)
-// Âß¼­£ºÊÕµ½ ACQ -> ²é±í -> ÊÇÎÒµÄ¾Í¸ø(Grant) -> ²»ÊÇÎÒµÄ¾ÍÖØ¶¨Ïò(Redirect)
-// ============================================================================
+extern class LockTable* LockTable;
+
 void process_lock_acq(int sock, const dsm_header_t& head, const payload_lock_req_t& body) {
     int lock_id = body.lock_id;
     int requester = head.src_node_id;
 
-    ::LockTable->LockAcquire();
-    
-    // 1. ²é±í¿´ËøÏÖÔÚµÄ×´Ì¬
+    ::LockTable->GlobalMutexLock();
     auto* record = ::LockTable->Find(lock_id);
-    
-    // »ñÈ¡µ±Ç° Owner 
-    // -1 ±íÊ¾Î´·ÖÅä£¬Ä¬ÈÏ¹é Node 0
-    // Èç¹ûÎÒÊÇ Manager ÇÒ¼ÇÂ¼²»´æÔÚ£¬ÄÇÄ¬ÈÏÎÒÊÇ Owner
-    int current_owner = record ? record->owner_id : -1;
-    if (current_owner == -1 && ::dsm_getnodeid() == 0) {
-        current_owner = 0;
+    uint32_t count = record->invalid_set_count;
+    // è®¡ç®—å˜é•¿æ•°æ®çš„å­—èŠ‚å¤§å°
+    uint32_t list_bytes = count * sizeof(uint32_t);
+
+    ::LockTable->LocalMutexLock(lock_id);
+    ::LockTable->GlobalMutexUnlock();
+     
+    dsm_header_t rep_head = {0};
+    rep_head.type = DSM_MSG_LOCK_REP;
+    rep_head.src_node_id = dsm_getnodeid();
+    rep_head.seq_num = head.seq_num;
+    rep_head.payload_len = sizeof(payload_lock_rep_t) + list_bytes;
+    rep_head.unused = 1; 
+  
+    payload_lock_rep_t rep_body_fixed;
+    rep_body_fixed.invalid_set_count = count;
+        
+    ::LockTable->LocalMutexUnlock(lock_id);
+        
+    send(sock, (const char*)&rep_head, sizeof(rep_head), 0);
+    send(sock, (const char*)&rep_body_fixed, sizeof(rep_body_fixed), 0);
+    if(count > 0) {
+        send(sock, (const char*)record->invalid_page_list.data(), list_bytes, 0);
     }
 
-    // ============================================================
-    // Case A: ÎÒÊÇ Owner (ËøµÄTokenÔÚÎÒÕâ)
-    // ============================================================
-    if (current_owner == state.my_node_id) {      
-        std::cout << "[DSM] Granting Lock " << lock_id << " to Node " << requester << std::endl;
+    return ;
 
-        // 1. ¹¹Ôì»Ø¸´£ºunused=1 (Success/Grant)
-        dsm_header_t rep_head = {0};
-        rep_head.type = DSM_MSG_LOCK_REP;
-        rep_head.src_node_id = dsm_getnodeid();
-        rep_head.seq_num = head.seq_num;
-        rep_head.payload_len = sizeof(payload_lock_rep_t);
-        rep_head.unused = 1; // <--- 1 ±íÊ¾ÊÚÈ¨³É¹¦
-
-        // 2. ¹¹Ôì Payload
-        payload_lock_rep_t rep_body;
-        rep_body.lock_id = lock_id;
-        rep_body.realowner = requester; // È·ÈÏÄãÊÇĞÂÖ÷ÈË
-        rep_body.invalid_set_count = 0; // Scope Consistency ÔİÊ±Áô¿Õ
-
-        // 3. ·¢ËÍ
-        send(sock, (const char*)&rep_head, sizeof(rep_head), 0);
-        send(sock, (const char*)&rep_body, sizeof(rep_body), 0);
-
-        // 4. ¸üĞÂ±¾µØ±í£ºÒÆ½»ËùÓĞÈ¨
-        // ÎÒ²»ÔÙÓµÓĞÕâ°ÑËø£¬ĞÂÖ÷ÈËÊÇ requester
-        if (record) {
-            record->owner_id = requester;
-            record->locked = false; // ¼ÈÈ»¸ø³öÈ¥ÁË£¬ÎÒ±¾µØ¿Ï¶¨Ã»Ëø×¡ÁË
-        } else {
-            // Èç¹û±íÀïÃ»¼ÇÂ¼£¬²åÈëÒ»Ìõ£¬¼ÇÂ¼ĞÂÖ÷ÈË
-            ::LockTable->Insert(lock_id, LockRecord(requester));
-        }
-        std::cout << "  -> Lock Ownership transferred." << std::endl;
-    }
-    // ============================================================
-    // Case B: ÎÒ²»ÊÇ Owner -> ÖØ¶¨Ïò (Redirect)
-    // ============================================================
-    else {
-        if (current_owner == -1) current_owner = 0; // Ä¬ÈÏ Owner ÊÇ Node 0
-
-        std::cout << "[DSM] Redirect Lock " << lock_id << ": Me(" << ::NodeId 
-                  << ") -> RealOwner(" << current_owner << ")" << std::endl;
-
-        // 1. ¹¹Ôì»Ø¸´£ºunused=0 (Redirect)
-        dsm_header_t rep_head = {0};
-        rep_head.type = DSM_MSG_LOCK_REP;
-        rep_head.src_node_id = dsm_getnodeid;
-        rep_head.seq_num = head.seq_num;
-        rep_head.payload_len = sizeof(payload_lock_rep_t);
-        rep_head.unused = 0; // <--- 0 ±íÊ¾ÖØ¶¨Ïò
-
-        // 2. ¹¹Ôì Payload (¸æËßClientË­²ÅÊÇÕæOwner)
-        payload_lock_rep_t rep_body;
-        rep_body.lock_id = lock_id;
-        rep_body.realowner = current_owner; // °ÑÕæ Owner ID·¢»ØÈ¥
-        rep_body.invalid_set_count = 0;
-
-        // 3. ·¢ËÍ
-        send(sock, (const char*)&rep_head, sizeof(rep_head), 0);
-        send(sock, (const char*)&rep_body, sizeof(rep_body), 0);
-    }
-    
-    ::LockTable->LockRelease();
 }
 
 
+void process_lock_rls(int sock, const dsm_header_t& head, const payload_lock_rls_t& body) {
+    
+
+    // 1. æ„é€ å›å¤ (ACK) åªå›å¤å¤´
+    dsm_header_t ack_head = {0};
+    ack_head.type = DSM_MSG_ACK;
+    ack_head.src_node_id = dsm_getnodeid();
+    ack_head.seq_num = head.seq_num;
+    ack_head.payload_len = 0;
+    ack_head.unused = 0;//æ²¡ç”¨åˆ° 
+
+    // 3. å‘é€å›å¤ åªå›å¤å¤´
+    send(sock, (const char*)&ack_head, sizeof(ack_head), 0);
+
+}

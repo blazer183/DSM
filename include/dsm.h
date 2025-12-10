@@ -1,4 +1,4 @@
-/*1. ±£»¤Óë»ù´¡ÒýÓÃÇø£ºÈç¹ûÎ´°üº¬Í·ÎÄ¼þ£¨tagÎªDSM_HµÄ£©£¬Ôò°üº¬£¬Õû¸öÍ·ÎÄ¼þ¶¼ÔÚdef·¶Î§ÄÚ*/
+/*1. ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Î´ï¿½ï¿½ï¿½ï¿½Í·ï¿½Ä¼ï¿½ï¿½ï¿½tagÎªDSM_Hï¿½Ä£ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Í·ï¿½Ä¼ï¿½ï¿½ï¿½ï¿½ï¿½defï¿½ï¿½Î§ï¿½ï¿½*/
 #ifndef DSM_H
 #define DSM_H
 
@@ -9,24 +9,24 @@
 
 
 
-/* ¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª£¡£¡£¡£¡£¡ÖØÒª£¡£¡£¡£¡£¡¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª¡ª
+/* ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Òªï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 
-±äÁ¿ÓëÊý¾Ý½á¹¹µÄÉùÃ÷¹æÔò£º
-1.ºê£ºÈ«´óÐ´
-2.È«¾Ö±äÁ¿/È«¾ÖÊý¾Ý½á¹¹£ºÊ××ÖÄ¸´óÐ´£¬ÆäÓàÐ¡Ð´£¬¶à¸öµ¥´ÊÖ±½ÓÏàÁ¬ ±ÈÈç£ºSharedPages
-3.½á¹¹ÌåÄÚ²¿±äÁ¿£ºÈ«Ð¡Ð´£¬¶à¸öµ¥´ÊÓÃÏÂ»®ÏßÁ¬½Ó ±ÈÈç£ºlock_id
+ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ý½á¹¹ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+1.ï¿½ê£ºÈ«ï¿½ï¿½Ð´
+2.È«ï¿½Ö±ï¿½ï¿½ï¿½/È«ï¿½ï¿½ï¿½ï¿½ï¿½Ý½á¹¹ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ä¸ï¿½ï¿½Ð´ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ð¡Ð´ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ö±ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ç£ºSharedPages
+3.ï¿½á¹¹ï¿½ï¿½ï¿½Ú²ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½È«Ð¡Ð´ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Â»ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ç£ºlock_id
 
-4.¾Ö²¿±äÁ¿/¾Ö²¿Êý¾Ý½á¹¹£º²»×öÒªÇó
+4.ï¿½Ö²ï¿½ï¿½ï¿½ï¿½ï¿½/ï¿½Ö²ï¿½ï¿½ï¿½ï¿½Ý½á¹¹ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Òªï¿½ï¿½
 
 */
 
 
-//2.ºê³£Á¿ÉùÃ÷Çø
+//2.ï¿½ê³£ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 
 #define PAGESIZE 4096
 
 
-//3.È«¾ÖÀàÐÍÉùÃ÷Çø
+//3.È«ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 
 struct PageTable;
 struct LockTable;
@@ -34,26 +34,25 @@ struct BindTable;
 struct SocketTable;
 
 
-//4.È«¾Ö±äÁ¿ÉùÃ÷
+//4.È«ï¿½Ö±ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 
-extern struct PageTable *PageTable;         // Ò³±í
-extern struct LockTable *LockTable;         // Ëø±í
-extern struct BindTable *BindTable;         // Bind±í
-extern struct SocketTable *SocketTable;     // Socket±í
+extern struct PageTable *PageTable;         // Ò³ï¿½ï¿½
+extern struct LockTable *LockTable;         // ï¿½ï¿½ï¿½ï¿½
+extern struct BindTable *BindTable;         // Bindï¿½ï¿½
+extern struct SocketTable *SocketTable;     // Socketï¿½ï¿½
 
-extern size_t SharedPages;                  // ¹²ÏíÇøÓÐ¼¸Ò³
-extern int NodeId;                          // ¼¯ÈºID
-extern void *SharedAddrBase;                // ¹²ÏíÇøÆðÊ¼µØÖ·
-extern int ProcNum;                         // ½ø³Ì×ÜÊý
-extern int WorkerNodeNum;                   // Worker½Úµã×ÜÊý
-extern std::vector<std::string> WorkerNodeIps;  // Worker½ÚµãIPÁÐ±í
+extern size_t SharedPages;                  // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ð¼ï¿½Ò³
+extern int NodeId;                          // ï¿½ï¿½ÈºID
+extern void *SharedAddrBase;                // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ê¼ï¿½ï¿½Ö·
+extern int ProcNum;                         // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+extern int WorkerNodeNum;                   // Workerï¿½Úµï¿½ï¿½ï¿½ï¿½ï¿½
+extern std::vector<std::string> WorkerNodeIps;  // Workerï¿½Úµï¿½IPï¿½Ð±ï¿½
 
-extern int next_node_id;              // ÏÂÒ»¸ö·ÖÅäµÄ½ÚµãID
+extern int next_node_id;              // ï¿½ï¿½Ò»ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ä½Úµï¿½ID
 
-//5.È«¾Öº¯ÊýÉùÃ÷
+
 
 int dsm_init(int dsm_memsize);  
-/*´´½¨¼àÌýÏß³Ì£¬¼ÓÈë¼¯Èº²¢»ñÈ¡id£¬³õÊ¼»¯Ò³±í£¬Ëø±í£¬Bind±í£¬¿ª±Ù¹²ÏíÇø£¬³õÊ¼»¯barrier*/
 int dsm_finalize(void);
 int dsm_getnodeid(void);
 
@@ -62,13 +61,13 @@ int dsm_mutex_destroy(int *mutex);
 int dsm_mutex_lock(int *mutex);
 int dsm_mutex_unlock(int *mutex);
 
-void dsm_bind(void *addr, const char *name);
+void dsm_bind(void *addr, const char *name,size_t element_size);
 bool dsm_barrier(void);
 void *dsm_malloc(size_t size);
 
 
 
-std::string GetPodIp(int pod_id);      // ¸ù¾ÝPodID²éÕÒIP
-int GetPodPort(int pod_id);            // ¸ù¾ÝPodID²éÕÒ¶Ë¿Ú
+std::string GetPodIp(int pod_id);      // ï¿½ï¿½ï¿½ï¿½PodIDï¿½ï¿½ï¿½ï¿½IP
+int GetPodPort(int pod_id);            // ï¿½ï¿½ï¿½ï¿½PodIDï¿½ï¿½ï¿½Ò¶Ë¿ï¿½
 
 #endif /* DSM_H */

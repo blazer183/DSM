@@ -29,7 +29,7 @@ public:
     TableBase(TableBase &&) noexcept = delete;
     TableBase &operator=(TableBase &&) noexcept = delete;
 
-    bool Insert(const key_type &key, const record_type &record) //Ôö
+    bool Insert(const key_type &key, const record_type &record) 
     {
         if (entries_.find(key) != entries_.end())
             return false;
@@ -39,7 +39,7 @@ public:
         return true;
     }
 
-    bool Update(const key_type &key, const record_type &record) //¸Ä
+    bool Update(const key_type &key, const record_type &record) 
     {
         auto it = entries_.find(key);
         if (it == entries_.end())
@@ -48,12 +48,12 @@ public:
         return true;
     }
 
-    bool Remove(const key_type &key)                            //É¾
+    bool Remove(const key_type &key)                            
     {
         return entries_.erase(key) > 0;
     }
 
-    record_type *Find(const key_type &key)                      //²é    
+    record_type *Find(const key_type &key)                      
     {
         auto it = entries_.find(key);
         return (it == entries_.end()) ? nullptr : &it->second;
@@ -70,8 +70,8 @@ public:
 
     void Clear() noexcept { entries_.clear(); }
 
-    int LockAcquire() noexcept { return ::pthread_mutex_lock(&mutex_); }
-    int LockRelease() noexcept { return ::pthread_mutex_unlock(&mutex_); }
+    int GlobalMutexLock() noexcept { return ::pthread_mutex_lock(&mutex_); }
+    int GlobalMutexUnlock() noexcept { return ::pthread_mutex_unlock(&mutex_); }
 
 protected:
     bool HasCapacity() const noexcept { return entries_.size() < capacity_; }

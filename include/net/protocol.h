@@ -68,11 +68,6 @@ typedef struct {
     uint32_t payload_len;    // 后续负载长度 (不含包头)
 } __attribute__((packed)) dsm_header_t;
 
-
-
-
-
-
 // [DSM_MSG_PAGE_REQ] Requestor -> Manager
 typedef struct {
     uint32_t page_index;        // 请求的全局页号
@@ -81,7 +76,7 @@ typedef struct {
 // [DSM_MSG_PAGE_REP] Manager -> Requestor
 typedef struct {
     uint16_t real_owner_id;
-    char pagedata[DSM_PAGE_SIZE]
+    char pagedata[DSM_PAGE_SIZE];
 } __attribute__((packed)) payload_page_rep_t;
 
 // [DSM_MSG_LOCK_ACQ]  Requestor -> Manager
@@ -91,14 +86,18 @@ typedef struct {
 
 // [DSM_MSG_LOCK_REP] Manager -> Requestor (授予锁)
 typedef struct {
-    uint32_t invalid_set_count; // Scope Consistency: 需要失效的页数量
-    vector invalid_page_list;
+    uint32_t invalid_set_count; 
+    //跟上失效的数组
+    uint32_t invalid_page_list[0]; // 无效页号数组（动态大小）
+    
 } __attribute__((packed)) payload_lock_rep_t;
 
 // [DSM_MSG_LOCK_RLS] LockOwner -> Manager (释放锁)
 typedef struct {
-    uint32_t invalid_set_count; // Scope Consistency: 需要失效的页数量
-    vector invalid_page_list;
+    uint32_t invalid_set_count; 
+    uint32_t lock_id;
+    //跟上失效的数组
+    uint32_t invalid_page_list[0]; // 无效页号数组（动态大小）
 } __attribute__((packed)) payload_lock_rls_t;
 
 // [DSM_MSG_OWNER_UPDATE] RealOwner -> Manager
