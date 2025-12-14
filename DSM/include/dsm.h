@@ -32,15 +32,15 @@ extern std::vector<std::string> WorkerNodeIps;  //
 
 
 int dsm_init(int dsm_memsize);  
-
 int dsm_finalize(void);
+
 int dsm_getpodid(void);
 
 int dsm_mutex_init();
 int dsm_mutex_destroy(int *mutex);
 int dsm_mutex_lock(int *mutex);
 int dsm_mutex_unlock(int *mutex);
-void* dsm_malloc(const char *name, int * num);
+void* dsm_malloc(const char *name, int * num); //name:共享区绑定的文件路径； 返回共享区起始地址
 
 bool dsm_barrier(void);
 

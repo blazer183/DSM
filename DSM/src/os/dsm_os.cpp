@@ -88,6 +88,15 @@ int GetPodPort(int pod_id) {
 
 bool dsm_barrier()
 {
+    if (SharedAddrBase != nullptr && SharedPages > 0) {
+        size_t total_size = SharedPages * PAGESIZE;
+        if (mprotect(SharedAddrBase, total_size, PROT_NONE) == -1) {
+            std::cerr << "[dsm_mutex_lock] mprotect failed: " << std::strerror(errno) << std::endl;
+        }else{
+            std::cerr << "[dsm_mutex_lock] mprotect succeed: " << std::endl;
+        }
+    }
+
     std::string target_ip = LeaderNodeIp;
 
     // Connect to leader node for synchronization
@@ -159,16 +168,6 @@ int dsm_mutex_destroy(int *mutex){
 }
 
 int dsm_mutex_lock(int *mutex){
-    // Invalidate all shared space using mprotect so that page faults are triggered
-    // when accessing any shared page
-    if (SharedAddrBase != nullptr && SharedPages > 0) {
-        size_t total_size = SharedPages * PAGESIZE;
-        if (mprotect(SharedAddrBase, total_size, PROT_NONE) == -1) {
-            std::cerr << "[dsm_mutex_lock] mprotect failed: " << std::strerror(errno) << std::endl;
-        }else{
-            std::cerr << "[dsm_mutex_lock] mprotect succeed: " << std::endl;
-        }
-    }
 
     const int lockid = *mutex;
     int lockprobowner = lockid % ProcNum;

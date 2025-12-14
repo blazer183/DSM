@@ -104,7 +104,6 @@ int main(){
         S += Ar[i];
     }
     std:: cout << "Local sum is : " << S << std::endl;
-    
     dsm_mutex_unlock(&lock_A);
 
     dsm_barrier();

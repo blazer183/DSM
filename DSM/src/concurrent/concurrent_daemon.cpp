@@ -8,6 +8,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <cstring>
+#include <sys/mman.h>
 
 #include "concurrent/concurrent_core.h"
 #include "net/protocol.h"
@@ -298,10 +299,26 @@ void process_page_req(int sock, const dsm_header_t &head, rio_t &rp) {
         std::cout << "[DSM Daemon] We are the owner of page " << VPN << ", sending page data" << std::endl;
         
         // Prepare a buffer for page data
+        
+        // Compute page virtual address and ensure it's readable so we can memcpy
+        void* page_addr = reinterpret_cast<void*>(static_cast<uintptr_t>(VPN) << 12);
+        size_t total_size = PAGESIZE;
+        if (mprotect(page_addr, total_size, PROT_READ) == -1) {
+            std::cerr << "[dsm_mutex_lock] mprotect failed: " << std::strerror(errno) << std::endl;
+        } else {
+            std::cerr << "[dsm_mutex_lock] mprotect succeed" << std::endl;
+        }
+
         char page_buffer[PAGESIZE];
         std::memset(page_buffer, 0, PAGESIZE);
-        uintptr_t page_add = static_cast<uintptr_t>(VPN) << 12;
-        std::memcpy(page_buffer, reinterpret_cast<void*>(page_add), PAGESIZE);
+
+        std::memcpy(page_buffer, page_addr, PAGESIZE);
+
+        if (mprotect(page_addr, total_size, PROT_NONE) == -1) {
+            std::cerr << "[dsm_mutex_lock] mprotect failed: " << std::strerror(errno) << std::endl;
+        } else {
+            std::cerr << "[dsm_mutex_lock] mprotect succeed" << std::endl;
+        }
         
         // Send page data
         dsm_header_t rep_header = {
@@ -450,7 +467,8 @@ void process_page_req(int sock, const dsm_header_t &head, rio_t &rp) {
             }
             
             // Update owner to Pod 0 after loading
-            rec->owner_id = 0;
+
+            //rec->owner_id = 0;
         } else {
             std::cout << "[DSM Daemon] Page not bound to file, sending zero-filled page" << std::endl;
         }

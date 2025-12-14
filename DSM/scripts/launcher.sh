@@ -130,7 +130,7 @@ export LANGUAGE=en_US:en
 # --- Project path ---
 SOURCE_DIR="$HOME/dsm"        # Your source root directory
 #BUILD_CMD="make -j4" # Your build command
-BUILD_CMD='g++ -std=c++17 -pthread -DUNITEST -I"DSM/include" test_dsm.cpp "DSM/src/os/dsm_os.cpp" "DSM/src/os/dsm_os_cond.cpp" "DSM/src/os/pfhandler.cpp" "DSM/src/concurrent/concurrent_daemon.cpp" "DSM/src/network/connection.cpp" -o dsm_app -lpthread'
+BUILD_CMD='g++ -std=c++17 -pthread -DUNITEST -I"DSM/include" Dijkstra.cpp "DSM/src/os/dsm_os.cpp" "DSM/src/os/dsm_os_cond.cpp" "DSM/src/os/pfhandler.cpp" "DSM/src/concurrent/concurrent_daemon.cpp" "DSM/src/network/connection.cpp" -o dsm_app -lpthread'
 EXE_NAME="dsm_app"                      # The name of the compiled executable
 
 # --- Deployment target path (uniform across all machines) ---

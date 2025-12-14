@@ -40,7 +40,7 @@ STATIC void segv_handler(int signo, siginfo_t* info, void* uctx)
     (void)uctx;
     
     // Get the faulting address
-    std::cout << "<Page Fault Happened!>" << std::endl;
+    std::cout << "[System information] Page Fault Happened!" << std::endl;
     uintptr_t fault_addr = (uintptr_t)info->si_addr;
     uintptr_t region_start = (uintptr_t)g_region;
     uintptr_t region_end = region_start + (g_region_pages * g_page_sz);
